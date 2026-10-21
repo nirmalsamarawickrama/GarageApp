@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AutoPulse</string>
+    <string name="title_activity_main">AutoPulse</string>
+    <string name="package_name">com.autopulse.garage</string>
+    <string name="custom_url_scheme">com.autopulse.garage</string>
+</resources>
