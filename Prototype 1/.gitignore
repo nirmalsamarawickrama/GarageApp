@@ -1,0 +1,118 @@
+# ==============================================================================
+# AutoPulse Garage App - Prototype 1 .gitignore
+# Covers: Vite/React/Node, Android (Kotlin/Gradle), Capacitor, IDEs, and OS files
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Node & Web Build (Vite / React / Capacitor)
+# ------------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+build/
+out/
+.pnp
+.pnp.js
+
+# Environment variables & local overrides
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+
+# Logs & debugging
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ------------------------------------------------------------------------------
+# Android & Gradle (Native App & Capacitor Android)
+# ------------------------------------------------------------------------------
+# Gradle build outputs & cache directories
+.gradle/
+**/build/
+build/
+bin/
+gen/
+
+# Android Studio & SDK local configurations
+local.properties
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Built application packages & libraries
+*.apk
+*.ap_
+*.aab
+*.aar
+
+# Dalvik/ART VM & Java bytecode
+*.dex
+*.class
+
+# Proguard / Lint
+proguard/
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
+
+# Memory profiler dumps
+*.hprof
+
+# Keystores & Signing credentials (security precaution)
+*.keystore
+*.jks
+
+# Capacitor Android generated plugin references
+capacitor-cordova-android-plugins/
+
+# ------------------------------------------------------------------------------
+# IDE & Editor Configurations
+# ------------------------------------------------------------------------------
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains IntelliJ IDEA / Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Swap & backup files
+*.sw?
+*~
+*.bak
+
+# ------------------------------------------------------------------------------
+# Operating System Files
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
