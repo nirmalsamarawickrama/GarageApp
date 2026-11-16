@@ -1,0 +1,17 @@
+{
+  "short_name": "AutoPulse",
+  "name": "AutoPulse Garage Bay OS",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#191816",
+  "theme_color": "#FF6B2B",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/"
+}

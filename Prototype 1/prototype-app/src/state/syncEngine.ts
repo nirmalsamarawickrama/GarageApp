@@ -22,7 +22,7 @@ class SyncEngine {
   private lastSyncedAt: string = new Date().toISOString();
 
   // Wi-Fi Local Network Sync Relay
-  private serverUrl: string = 'http://192.168.1.5:5173';
+  private serverUrl: string = 'http://192.168.1.2:5173';
   private clientId: string = 'client-' + Math.random().toString(36).substring(2, 9);
   private eventSource: EventSource | null = null;
   private isWifiRelayConnected: boolean = false;

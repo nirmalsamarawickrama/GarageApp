@@ -1,0 +1,9 @@
+{
+  "appId": "com.autopulse.garage.v2",
+  "appName": "AutoPulse SpecGrid",
+  "webDir": "dist",
+  "server": {
+    "url": "http://192.168.1.2:5173",
+    "cleartext": true
+  }
+}

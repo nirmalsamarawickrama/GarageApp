@@ -1,0 +1,153 @@
+/* ==========================================================================
+   AutoPulse Prototype 2 — Tactile Hardware / Industrial Garage Tokens
+   Theme: Matte Shop-Floor Asphalt, Anodized Gunmetal & Hydraulic Safety Orange
+   ========================================================================== */
+
+:root {
+  /* 60% Primary Canvas (Oiled Shop-Floor Charcoal) */
+  --bg-canvas: oklch(0.165 0.006 70);
+
+  /* 30% Structural Tool-Chest & Diagnostic Surfaces */
+  --bg-surface: oklch(0.215 0.007 70);     /* Matte Gunmetal Housing */
+  --bg-elevated: oklch(0.265 0.008 70);    /* Brushed Dark Steel Panel */
+  --bg-recessed: oklch(0.135 0.005 70);    /* Recessed Gauge / Input Cavity */
+  --bg-inverse: oklch(0.135 0.005 70);     /* Deep Carbon Cabinet */
+
+  --text-primary: oklch(0.945 0.007 82);   /* Shop-Light Warm Chalk (#F1EFEA) */
+  --text-muted: oklch(0.75 0.009 78);      /* Brushed Pewter (#AEA99F) */
+  --text-inverse: oklch(0.945 0.007 82);
+  --ink-on-accent: oklch(0.14 0.006 70);   /* Dark Carbon Ink for bright buttons/badges */
+
+  --border-subtle: oklch(0.35 0.008 72);   /* Machined Seam */
+  --border-strong: oklch(0.46 0.01 72);    /* Chamfered Steel Rim */
+
+  /* 10% Focal Garage & Motorsport Signal Accents */
+  --accent-primary: oklch(0.70 0.19 42);        /* Hydraulic Safety Orange (#FF6B2B) */
+  --accent-primary-hover: oklch(0.74 0.19 44);
+  --accent-primary-tint: oklch(0.26 0.05 40);
+
+  --accent-secondary: oklch(0.74 0.16 148);     /* Pit-Lane Torque Green (#26C96E) */
+  --accent-secondary-tint: oklch(0.24 0.05 150);
+
+  --accent-volt: oklch(0.85 0.17 95);           /* Caution Diagnostic Yellow (#E6D617) */
+  --accent-amber: oklch(0.79 0.16 78);          /* Check-Engine Amber (#F5AD27) */
+  --accent-amber-tint: oklch(0.26 0.05 75);
+
+  --accent-danger: oklch(0.68 0.19 25);         /* Redline Fault Red (#F55347) */
+  --accent-danger-solid: oklch(0.52 0.21 26);   /* High-Contrast White-Text Red CTA */
+  --accent-danger-tint: oklch(0.24 0.06 25);
+
+  --accent-violet: oklch(0.76 0.02 220);        /* Brushed Chrome Alloy (QC / Audit) */
+  --accent-violet-tint: oklch(0.26 0.012 220);
+
+  /* Stamped Aluminum License Plate Token */
+  --plate-bg: oklch(0.90 0.008 85);
+  --plate-ink: oklch(0.14 0.006 70);
+
+  /* Typography Bindings (Google Fonts loaded in index.html) */
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Machined Hardware Geometry */
+  --radius-sharp: 6px;
+  --radius-control: 4px;
+  --shadow-hardware: 0 4px 16px oklch(0 0 0 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.07);
+  --shadow-recessed: inset 0 2px 5px oklch(0 0 0 / 0.55);
+  --shadow-modal: 0 20px 50px oklch(0 0 0 / 0.72), inset 0 1px 0 oklch(1 0 0 / 0.09);
+
+  /* Motion Choreography */
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-micro: 160ms;
+  --dur-enter: 280ms;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawer-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scan-sweep {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(126px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pin-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  40% { transform: translateX(7px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(5px); }
+}
+
+@keyframes led-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.92); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.stagger-item {
+  opacity: 0;
+  animation: rise-in 320ms var(--ease-out-expo) forwards;
+  animation-delay: calc(min(var(--stagger-index, 0), 8) * 45ms);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.animate-spin {
+  animation: spin-slow 0.9s linear infinite;
+}
+
+.animate-scan-line {
+  animation: scan-sweep 2.2s var(--ease-out-expo) infinite;
+}
+
+.animate-shake {
+  animation: pin-shake 0.4s var(--ease-out-expo);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-item {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

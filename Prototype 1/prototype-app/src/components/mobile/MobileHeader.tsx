@@ -121,7 +121,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
           {/* Wi-Fi PC Dev Link Pill */}
           <button
             onClick={onOpenWifiSync}
-            title="Wi-Fi Dev Link: Connected to PC development server (192.168.1.5:5173). Tap to test or configure IP."
+            title="Wi-Fi Dev Link: Connected to PC development server (192.168.1.2:5173). Tap to test or configure IP."
             style={{
               display: 'flex',
               alignItems: 'center',

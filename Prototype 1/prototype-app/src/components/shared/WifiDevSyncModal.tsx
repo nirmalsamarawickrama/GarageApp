@@ -115,7 +115,7 @@ export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onCl
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
               <Laptop size={24} color="var(--accent-cyan)" />
               <span style={{ fontSize: '11px', fontWeight: 700, color: 'white' }}>Host PC Website</span>
-              <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>192.168.1.5:5173</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>192.168.1.2:5173</span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
@@ -176,7 +176,7 @@ export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onCl
               type="text"
               value={customUrl}
               onChange={(e) => setCustomUrl(e.target.value)}
-              placeholder="http://192.168.1.5:5173"
+              placeholder="http://192.168.1.2:5173"
               style={{
                 padding: '10px 12px',
                 borderRadius: '10px',

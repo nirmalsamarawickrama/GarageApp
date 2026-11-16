@@ -789,7 +789,7 @@ During local development and testing, you can host the AutoPulse web system dire
 ```
 +------------------------------------+           +-------------------------------------+
 |        Host PC (Dev Server)        |           |      Physical Android Phone         |
-|  • URL: http://192.168.1.5:5173    |  <=====>  |  • Installed APK (4.05 MB)          |
+|  • URL: http://192.168.1.2:5173    |  <=====>  |  • Installed APK (4.05 MB)          |
 |  • Middleware: localSyncBridge     |   Wi-Fi   |  • Connects to PC on launch         |
 |  • Browser: Active Management View |   Subnet  |  • Real-time mutations via SSE      |
 +------------------------------------+           +-------------------------------------+
@@ -802,7 +802,7 @@ npm run dev
 ```
 The server will bind to `0.0.0.0:5173` and output:
 - **Local:** `http://localhost:5173/`
-- **Network:** `http://192.168.1.5:5173/`
+- **Network:** `http://192.168.1.2:5173/`
 
 #### Step 2: Install the APK on Your Mobile Phone
 Copy `AutoPulse-v1.0-debug.apk` (4.05 MB) from the project root to your Android phone via USB cable, Google Drive, or local file sharing.
@@ -812,7 +812,7 @@ Tap the APK to install (enable "Install unknown apps" if prompted).
 Ensure your PC and your mobile phone are connected to the same Wi-Fi network (e.g., subnet `192.168.1.x`).
 
 #### Step 4: Launch and Test Synchronization
-1. Open AutoPulse on the phone. The app will immediately load the live development UI directly from your PC at `http://192.168.1.5:5173`.
+1. Open AutoPulse on the phone. The app will immediately load the live development UI directly from your PC at `http://192.168.1.2:5173`.
 2. Tap the **"PC Wi-Fi Link"** button on the Login Screen or Header to verify the active link and latency.
 3. Perform any action on the phone (e.g., advance a job card, deduct brake pads, or clock in a technician).
 4. Watch the PC web browser—the record updates in real time without refreshing!

@@ -41,7 +41,7 @@ function localSyncBridge(): Plugin {
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
           })
-          res.write(`data: ${JSON.stringify({ type: 'CONNECTED', serverIp: '192.168.1.5', port: 5173 })}\n\n`)
+          res.write(`data: ${JSON.stringify({ type: 'CONNECTED', serverIp: '192.168.1.2', port: 5173 })}\n\n`)
           sseClients.push(res)
 
           req.on('close', () => {
@@ -56,7 +56,7 @@ function localSyncBridge(): Plugin {
           res.end(
             JSON.stringify({
               status: 'ONLINE',
-              serverIp: '192.168.1.5',
+              serverIp: '192.168.1.2',
               port: 5173,
               activeClients: sseClients.length,
               timestamp: new Date().toISOString(),
