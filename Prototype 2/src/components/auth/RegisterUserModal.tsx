@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   UserPlus,
@@ -36,6 +36,22 @@ export const RegisterUserModal: React.FC<RegisterUserModalProps> = ({
   onSuccess,
   initialMode = 'REGISTER',
 }) => {
+  if (!isOpen) return null;
+  return (
+    <RegisterUserModalContent
+      key={initialMode}
+      onClose={onClose}
+      onSuccess={onSuccess}
+      initialMode={initialMode}
+    />
+  );
+};
+
+const RegisterUserModalContent: React.FC<{
+  onClose: () => void;
+  onSuccess: (user: User) => void;
+  initialMode: 'REGISTER' | 'LINK';
+}> = ({ onClose, onSuccess, initialMode }) => {
   const [tabMode, setTabMode] = useState<'REGISTER' | 'LINK'>(initialMode);
 
   // Registration Form State
@@ -56,8 +72,15 @@ export const RegisterUserModal: React.FC<RegisterUserModalProps> = ({
     text: string;
     type: 'success' | 'error';
   } | null>(null);
+  const timerRef = useRef<number | null>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
 
   const isOnline = syncEngine.getIsOnline();
   const globalCloudUsers = authEngine.getGlobalCloudUsers();
@@ -85,15 +108,16 @@ export const RegisterUserModal: React.FC<RegisterUserModalProps> = ({
     });
 
     if (res.success && res.user) {
+      const createdUser = res.user;
       const syncNote = isOnline
         ? 'Account registered and synchronized with global AutoPulse cloud.'
         : 'Account saved locally in Room SQLite. Queued in Outbox for cloud sync.';
       setFeedback({ text: syncNote, type: 'success' });
 
-      setTimeout(() => {
-        onSuccess(res.user!);
+      timerRef.current = window.setTimeout(() => {
+        onSuccess(createdUser);
         onClose();
-      }, 1000);
+      }, 900);
     } else {
       setFeedback({ text: res.error || 'Failed to register account.', type: 'error' });
     }
@@ -108,14 +132,15 @@ export const RegisterUserModal: React.FC<RegisterUserModalProps> = ({
 
     const res = authEngine.linkExistingCloudAccount(linkEmail.trim(), linkPin.trim());
     if (res.success && res.user) {
+      const linkedUser = res.user;
       setFeedback({
-        text: `Account for ${res.user.name} verified and linked to this device!`,
+        text: `Account for ${linkedUser.name} verified and linked to this device!`,
         type: 'success',
       });
-      setTimeout(() => {
-        onSuccess(res.user!);
+      timerRef.current = window.setTimeout(() => {
+        onSuccess(linkedUser);
         onClose();
-      }, 1000);
+      }, 900);
     } else {
       setFeedback({ text: res.error || 'Authentication failed.', type: 'error' });
     }

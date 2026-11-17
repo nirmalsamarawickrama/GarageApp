@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Lock, Delete, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Lock, Delete, AlertCircle, KeyRound, CheckCircle2 } from 'lucide-react';
 import { authEngine } from '../../auth/authEngine';
 import { ROLE_METADATA } from '../../auth/permissions';
 import { User } from '../../types';
@@ -35,41 +35,83 @@ const PinChallengeModalContent: React.FC<{
   onSuccess: (user: User) => void;
 }> = ({ onClose, targetUser, onSuccess }) => {
   const [enteredPin, setEnteredPin] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [isShaking, setIsShaking] = useState(false);
+  const verifyTimerRef = useRef<number | null>(null);
+  const shakeTimerRef = useRef<number | null>(null);
 
   const roleMeta = ROLE_METADATA[targetUser.role];
 
-  const handleDigit = (digit: string) => {
-    if (enteredPin.length < 4) {
+  useEffect(() => {
+    return () => {
+      if (verifyTimerRef.current !== null) window.clearTimeout(verifyTimerRef.current);
+      if (shakeTimerRef.current !== null) window.clearTimeout(shakeTimerRef.current);
+    };
+  }, []);
+
+  const handleDigit = useCallback(
+    (digit: string) => {
+      if (isVerifying || enteredPin.length >= 4) return;
       const nextPin = enteredPin + digit;
       setEnteredPin(nextPin);
       setErrorMessage(null);
 
       if (nextPin.length === 4) {
-        setTimeout(() => {
+        setIsVerifying(true);
+        verifyTimerRef.current = window.setTimeout(() => {
           const res = authEngine.verifyAndSwitchUser(targetUser.id, nextPin);
+          setIsVerifying(false);
           if (res.success && res.user) {
             onSuccess(res.user);
           } else {
             setErrorMessage(res.error || 'Incorrect 4-digit PIN code.');
             setIsShaking(true);
-            setTimeout(() => setIsShaking(false), 450);
+            shakeTimerRef.current = window.setTimeout(() => setIsShaking(false), 450);
             setEnteredPin('');
           }
         }, 120);
       }
-    }
-  };
+    },
+    [enteredPin, isVerifying, onSuccess, targetUser.id]
+  );
 
-  const handleBackspace = () => {
+  const handleBackspace = useCallback(() => {
+    if (isVerifying) return;
     setEnteredPin((prev) => prev.slice(0, -1));
     setErrorMessage(null);
-  };
+  }, [isVerifying]);
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
+    if (isVerifying) return;
     setEnteredPin('');
     setErrorMessage(null);
+  }, [isVerifying]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        handleDigit(e.key);
+      } else if (e.key === 'Backspace') {
+        handleBackspace();
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleBackspace, handleDigit, onClose]);
+
+  const handleRequestItReset = () => {
+    const res = authEngine.requestPinReset(targetUser.id);
+    if (res.success) {
+      setErrorMessage(null);
+      setResetNotice(res.message);
+    } else {
+      setResetNotice(null);
+      setErrorMessage(res.message);
+    }
   };
 
   return (
@@ -127,8 +169,28 @@ const PinChallengeModalContent: React.FC<{
                 gap: '6px',
               }}
             >
-              <AlertCircle size={14} />
+              <AlertCircle size={14} style={{ flexShrink: 0 }} />
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {resetNotice && (
+            <div
+              style={{
+                width: '100%',
+                background: 'var(--accent-secondary-tint)',
+                border: '1px solid var(--accent-secondary)',
+                color: 'var(--accent-secondary)',
+                padding: '8px 12px',
+                fontSize: '12px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+              <span>{resetNotice}</span>
             </div>
           )}
 
@@ -170,6 +232,7 @@ const PinChallengeModalContent: React.FC<{
                   <button
                     key={val}
                     type="button"
+                    disabled={isVerifying}
                     onClick={handleClear}
                     className="sg-btn sg-btn-secondary"
                     style={{ height: '52px', fontSize: '12px' }}
@@ -183,6 +246,7 @@ const PinChallengeModalContent: React.FC<{
                   <button
                     key={val}
                     type="button"
+                    disabled={isVerifying}
                     onClick={handleBackspace}
                     className="sg-btn sg-btn-secondary"
                     style={{ height: '52px' }}
@@ -196,6 +260,7 @@ const PinChallengeModalContent: React.FC<{
                 <button
                   key={val}
                   type="button"
+                  disabled={isVerifying}
                   onClick={() => handleDigit(val)}
                   className="sg-btn sg-btn-secondary tabular"
                   style={{
@@ -210,6 +275,24 @@ const PinChallengeModalContent: React.FC<{
               );
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={handleRequestItReset}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--accent-primary)',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <KeyRound size={13} /> Request IT PIN Reset
+          </button>
 
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
             Zero-Knowledge Terminal &bull; Demo PINs: 1111 (Owner) &middot; 2222 (Mgr) &middot; 3333 (Mech) &middot; 4444 (Acct) &middot; 5555 (IT)

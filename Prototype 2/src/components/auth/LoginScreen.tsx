@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mail,
   KeyRound,
@@ -33,6 +33,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [availableUsers, setAvailableUsers] = useState<User[]>(authEngine.getAvailableUsers());
   const [loginMode, setLoginMode] = useState<'PIN' | 'PASSWORD'>('PIN');
   const [enteredPin, setEnteredPin] = useState('');
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState(() => {
     const initial = authEngine.getAvailableUsers();
     return initial.length > 0 ? initial[0].email : '';
@@ -40,10 +41,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [password, setPassword] = useState('AutoPulse@2026!');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetTargetUserId, setResetTargetUserId] = useState<string | undefined>(undefined);
   const [challengeTargetUser, setChallengeTargetUser] = useState<User | null>(null);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [registerInitialMode, setRegisterInitialMode] = useState<'REGISTER' | 'LINK'>('REGISTER');
   const [isWifiSyncOpen, setIsWifiSyncOpen] = useState(false);
+  const pinTimerRef = useRef<number | null>(null);
 
   const isOnline = syncEngine.getIsOnline();
 
@@ -53,21 +56,29 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       setAvailableUsers(users);
       setSelectedEmail((prev) => prev || (users.length > 0 ? users[0].email : ''));
     });
-    return () => unsubAuth();
+    return () => {
+      unsubAuth();
+      if (pinTimerRef.current !== null) {
+        window.clearTimeout(pinTimerRef.current);
+      }
+    };
   }, []);
 
   const allRequests = authEngine.getAllPinResetRequests();
-  const promptedRequest = allRequests.find((r) => r.status === 'PROMPTED');
+  const promptedRequests = allRequests.filter((r) => r.status === 'PROMPTED');
 
-  const handlePinDigit = (digit: string) => {
-    if (enteredPin.length < 4) {
+  const handlePinDigit = useCallback(
+    (digit: string) => {
+      if (isVerifyingPin || enteredPin.length >= 4) return;
       const nextPin = enteredPin + digit;
       setEnteredPin(nextPin);
       setErrorMessage(null);
 
       if (nextPin.length === 4) {
-        setTimeout(() => {
+        setIsVerifyingPin(true);
+        pinTimerRef.current = window.setTimeout(() => {
           const res = authEngine.loginWithPin(nextPin);
+          setIsVerifyingPin(false);
           if (res.success) {
             onLoginSuccess();
           } else {
@@ -76,18 +87,52 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           }
         }, 120);
       }
-    }
-  };
+    },
+    [enteredPin, isVerifyingPin, onLoginSuccess]
+  );
 
-  const handlePinBackspace = () => {
+  const handlePinBackspace = useCallback(() => {
+    if (isVerifyingPin) return;
     setEnteredPin((prev) => prev.slice(0, -1));
     setErrorMessage(null);
-  };
+  }, [isVerifyingPin]);
 
-  const handlePinClear = () => {
+  const handlePinClear = useCallback(() => {
+    if (isVerifyingPin) return;
     setEnteredPin('');
     setErrorMessage(null);
-  };
+  }, [isVerifyingPin]);
+
+  useEffect(() => {
+    if (
+      loginMode !== 'PIN' ||
+      isResetModalOpen ||
+      !!challengeTargetUser ||
+      isRegisterModalOpen ||
+      isWifiSyncOpen
+    ) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key >= '0' && e.key <= '9') {
+        handlePinDigit(e.key);
+      } else if (e.key === 'Backspace') {
+        handlePinBackspace();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    challengeTargetUser,
+    handlePinBackspace,
+    handlePinDigit,
+    isRegisterModalOpen,
+    isResetModalOpen,
+    isWifiSyncOpen,
+    loginMode,
+  ]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,14 +232,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </div>
         </div>
 
-        {/* Authorized PIN Reset Banner */}
-        {promptedRequest && (
+        {/* Authorized PIN Reset Banners */}
+        {promptedRequests.map((req) => (
           <button
+            key={req.id}
             type="button"
-            onClick={() => setIsResetModalOpen(true)}
+            onClick={() => {
+              setResetTargetUserId(req.userId);
+              setIsResetModalOpen(true);
+            }}
             style={{
               width: '100%',
-              marginTop: '16px',
+              marginTop: '12px',
               background: 'var(--accent-secondary-tint)',
               border: '2px solid var(--accent-secondary)',
               padding: '12px 14px',
@@ -210,12 +259,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <CheckCircle2 size={16} />
               <span>
-                <strong>Reset Prompt Ready for {promptedRequest.userName}:</strong> Tap to set your new PIN.
+                <strong>Reset Prompt Ready for {req.userName}:</strong> Tap to verify &amp; set your new PIN.
               </span>
             </div>
             <ArrowRight size={14} />
           </button>
-        )}
+        ))}
 
         {/* Sliding Mode Tabs */}
         <div
@@ -315,6 +364,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     <button
                       key={val}
                       type="button"
+                      disabled={isVerifyingPin}
                       onClick={handlePinClear}
                       className="sg-btn sg-btn-secondary"
                       style={{ height: '54px', fontSize: '13px' }}
@@ -328,6 +378,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     <button
                       key={val}
                       type="button"
+                      disabled={isVerifyingPin}
                       onClick={handlePinBackspace}
                       className="sg-btn sg-btn-secondary"
                       style={{ height: '54px' }}
@@ -341,6 +392,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   <button
                     key={val}
                     type="button"
+                    disabled={isVerifyingPin}
                     onClick={() => handlePinDigit(val)}
                     className="sg-btn sg-btn-secondary tabular"
                     style={{
@@ -358,7 +410,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsResetModalOpen(true)}
+              onClick={() => {
+                setResetTargetUserId(undefined);
+                setIsResetModalOpen(true);
+              }}
               style={{
                 marginTop: '14px',
                 background: 'transparent',
@@ -432,10 +487,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <label className="sg-label">Password</label>
               <input
                 type="password"
+                required
                 className="sg-input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="AutoPulse@2026!"
+                placeholder="Enter your password"
               />
             </div>
 
@@ -519,8 +575,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       <PinResetModal
         isOpen={isResetModalOpen}
-        onClose={() => setIsResetModalOpen(false)}
-        onPinResetComplete={() => setIsResetModalOpen(false)}
+        preselectedUserId={resetTargetUserId}
+        onClose={() => {
+          setIsResetModalOpen(false);
+          setResetTargetUserId(undefined);
+        }}
+        onPinResetComplete={() => {
+          setIsResetModalOpen(false);
+          setResetTargetUserId(undefined);
+        }}
       />
 
       <PinChallengeModal

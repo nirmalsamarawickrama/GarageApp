@@ -308,6 +308,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         isOpen={isPinResetModalOpen}
         onClose={() => setIsPinResetModalOpen(false)}
         preselectedUserId={user.id}
+        lockToPreselectedUser={true}
       />
 
       <PinChallengeModal

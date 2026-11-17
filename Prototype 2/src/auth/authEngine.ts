@@ -4,11 +4,21 @@ import { syncEngine } from '../state/syncEngine';
 
 const STORAGE_KEYS = {
   CURRENT_USER: 'autopulse_v2_current_user_session',
+  PERSISTENT_SESSION: 'autopulse_v2_remembered_session',
   CACHED_USERS: 'autopulse_v2_cached_users',
   PIN_REQUESTS: 'autopulse_v2_pin_reset_requests',
   GLOBAL_CLOUD_USERS: 'autopulse_v2_global_cloud_users',
   PASSWORD_RESETS: 'autopulse_v2_password_resets',
 };
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+function createUniqueUserId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 export interface PasswordStrengthResult {
   score: number;
@@ -139,23 +149,30 @@ export const DEMO_USERS: User[] = [
   },
 ];
 
-const INITIAL_PIN_REQUESTS: PinResetRequest[] = [
-  {
-    id: 'req-01',
-    userId: 'user-mech-1',
-    userName: 'Dave Miller',
-    userRole: 'MECHANIC',
-    userEmail: 'dave.tech@autopulse.io',
-    requestedAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-    status: 'PENDING',
-  },
-];
+function cloneDemoUsers(): User[] {
+  return DEMO_USERS.map((u) => ({ ...u }));
+}
+
+function createInitialPinRequests(): PinResetRequest[] {
+  return [
+    {
+      id: 'req-01',
+      userId: 'user-mech-1',
+      userName: 'Dave Miller',
+      userRole: 'MECHANIC',
+      userEmail: 'dave.tech@autopulse.io',
+      requestedAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+      status: 'PENDING',
+    },
+  ];
+}
 
 class AuthEngine {
   private currentUser: User | null = null;
-  private users: User[] = DEMO_USERS;
-  private globalCloudUsers: User[] = DEMO_USERS;
-  private pinRequests: PinResetRequest[] = INITIAL_PIN_REQUESTS;
+  private rememberSession = false;
+  private users: User[] = cloneDemoUsers();
+  private globalCloudUsers: User[] = cloneDemoUsers();
+  private pinRequests: PinResetRequest[] = createInitialPinRequests();
   private passwordResetSessions: PasswordResetSession[] = [];
   private listeners: Set<() => void> = new Set();
 
@@ -172,16 +189,47 @@ class AuthEngine {
           payload?: Partial<User> & { id: string };
         }>;
         const mutation = customEvent.detail;
-        if (mutation?.payload && mutation.action === 'CREATE') {
+        if (!mutation?.payload || !mutation.payload.id) return;
+
+        if (mutation.action === 'CREATE') {
           const newUser = mutation.payload as User;
           if (!this.users.some((u) => u.id === newUser.id)) {
             this.users = [newUser, ...this.users];
-            this.globalCloudUsers = [newUser, ...this.globalCloudUsers];
-            this.saveState();
           }
+          if (!this.globalCloudUsers.some((u) => u.id === newUser.id)) {
+            this.globalCloudUsers = [newUser, ...this.globalCloudUsers];
+          }
+          this.saveState();
+        } else if (mutation.action === 'UPDATE') {
+          const patch = mutation.payload;
+          this.users = this.users.map((u) =>
+            u.id === patch.id ? { ...u, ...patch } : u
+          );
+          this.globalCloudUsers = this.globalCloudUsers.map((u) =>
+            u.id === patch.id ? { ...u, ...patch } : u
+          );
+          if (this.currentUser?.id === patch.id) {
+            this.currentUser = { ...this.currentUser, ...patch };
+          }
+          this.saveState();
         }
       });
     }
+  }
+
+  private hydrateUser(u: User): User {
+    const demo = DEMO_USERS.find(
+      (d) => d.id === u.id || d.email.toLowerCase() === u.email.toLowerCase()
+    );
+    return {
+      ...u,
+      username: u.username || demo?.username || u.email.split('@')[0].toLowerCase(),
+      password: u.password || demo?.password || 'AutoPulse@2026!',
+      avatarUrl:
+        u.avatarUrl ||
+        demo?.avatarUrl ||
+        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+    };
   }
 
   private loadSession() {
@@ -189,44 +237,27 @@ class AuthEngine {
       const storedUsers = localStorage.getItem(STORAGE_KEYS.CACHED_USERS);
       if (storedUsers) {
         const parsed: User[] = JSON.parse(storedUsers);
-        this.users = parsed.map((u) => {
-          const demo = DEMO_USERS.find(
-            (d) => d.id === u.id || d.email.toLowerCase() === u.email.toLowerCase()
-          );
-          return {
-            ...u,
-            username: u.username || demo?.username || u.email.split('@')[0].toLowerCase(),
-            password: u.password || demo?.password || 'AutoPulse@2026!',
-          };
-        });
+        this.users = parsed.map((u) => this.hydrateUser(u));
       } else {
-        this.users = DEMO_USERS;
-        localStorage.setItem(STORAGE_KEYS.CACHED_USERS, JSON.stringify(DEMO_USERS));
+        this.users = cloneDemoUsers();
+        localStorage.setItem(STORAGE_KEYS.CACHED_USERS, JSON.stringify(this.users));
       }
 
       const storedCloud = localStorage.getItem(STORAGE_KEYS.GLOBAL_CLOUD_USERS);
       if (storedCloud) {
         const parsedCloud: User[] = JSON.parse(storedCloud);
-        this.globalCloudUsers = parsedCloud.map((u) => {
-          const demo = DEMO_USERS.find(
-            (d) => d.id === u.id || d.email.toLowerCase() === u.email.toLowerCase()
-          );
-          return {
-            ...u,
-            username: u.username || demo?.username || u.email.split('@')[0].toLowerCase(),
-            password: u.password || demo?.password || 'AutoPulse@2026!',
-          };
-        });
+        this.globalCloudUsers = parsedCloud.map((u) => this.hydrateUser(u));
       } else {
-        this.globalCloudUsers = DEMO_USERS;
-        localStorage.setItem(STORAGE_KEYS.GLOBAL_CLOUD_USERS, JSON.stringify(DEMO_USERS));
+        this.globalCloudUsers = cloneDemoUsers();
+        localStorage.setItem(STORAGE_KEYS.GLOBAL_CLOUD_USERS, JSON.stringify(this.globalCloudUsers));
       }
 
       const storedRequests = localStorage.getItem(STORAGE_KEYS.PIN_REQUESTS);
       if (storedRequests) {
         this.pinRequests = JSON.parse(storedRequests);
       } else {
-        localStorage.setItem(STORAGE_KEYS.PIN_REQUESTS, JSON.stringify(INITIAL_PIN_REQUESTS));
+        this.pinRequests = createInitialPinRequests();
+        localStorage.setItem(STORAGE_KEYS.PIN_REQUESTS, JSON.stringify(this.pinRequests));
       }
 
       const storedResets = localStorage.getItem(STORAGE_KEYS.PASSWORD_RESETS);
@@ -237,22 +268,30 @@ class AuthEngine {
       const storedUser = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (storedUser) {
         const parsed: User = JSON.parse(storedUser);
-        const demo = DEMO_USERS.find(
-          (d) => d.id === parsed.id || d.email.toLowerCase() === parsed.email.toLowerCase()
-        );
-        this.currentUser = {
-          ...parsed,
-          username: parsed.username || demo?.username || parsed.email.split('@')[0].toLowerCase(),
-          password: parsed.password || demo?.password || 'AutoPulse@2026!',
-        };
+        this.currentUser = this.hydrateUser(parsed);
       } else {
-        this.currentUser = null;
+        const rememberedRaw = localStorage.getItem(STORAGE_KEYS.PERSISTENT_SESSION);
+        if (rememberedRaw) {
+          const remembered = JSON.parse(rememberedRaw) as {
+            user?: User;
+            expiresAt?: number;
+          };
+          if (remembered.user && remembered.expiresAt && remembered.expiresAt > Date.now()) {
+            this.currentUser = this.hydrateUser(remembered.user);
+            this.rememberSession = true;
+          } else {
+            localStorage.removeItem(STORAGE_KEYS.PERSISTENT_SESSION);
+            this.currentUser = null;
+          }
+        } else {
+          this.currentUser = null;
+        }
       }
     } catch {
       this.currentUser = null;
-      this.users = DEMO_USERS;
-      this.globalCloudUsers = DEMO_USERS;
-      this.pinRequests = INITIAL_PIN_REQUESTS;
+      this.users = cloneDemoUsers();
+      this.globalCloudUsers = cloneDemoUsers();
+      this.pinRequests = createInitialPinRequests();
       this.passwordResetSessions = [];
     }
   }
@@ -265,8 +304,20 @@ class AuthEngine {
       localStorage.setItem(STORAGE_KEYS.PASSWORD_RESETS, JSON.stringify(this.passwordResetSessions));
       if (this.currentUser) {
         sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(this.currentUser));
+        if (this.rememberSession) {
+          localStorage.setItem(
+            STORAGE_KEYS.PERSISTENT_SESSION,
+            JSON.stringify({
+              user: this.currentUser,
+              expiresAt: Date.now() + THIRTY_DAYS_MS,
+            })
+          );
+        } else {
+          localStorage.removeItem(STORAGE_KEYS.PERSISTENT_SESSION);
+        }
       } else {
         sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        localStorage.removeItem(STORAGE_KEYS.PERSISTENT_SESSION);
       }
     } catch (e) {
       console.error('Failed to save auth state', e);
@@ -314,10 +365,25 @@ class AuthEngine {
     }));
   }
 
+  private buildUniqueUsername(base: string): string {
+    const cleanBase = base.toLowerCase().replace(/[^a-z0-9._-]/g, '') || 'operator';
+    const isTaken = (candidate: string) =>
+      this.globalCloudUsers.some(
+        (u) => u.username && u.username.toLowerCase() === candidate
+      );
+    if (!isTaken(cleanBase)) return cleanBase;
+    let counter = 2;
+    while (isTaken(`${cleanBase}${counter}`)) {
+      counter++;
+    }
+    return `${cleanBase}${counter}`;
+  }
+
   // Desktop Web Authentication (Username/Email & Strong Password)
   public loginWithCredentials(
     identifier: string,
-    password: string
+    password: string,
+    rememberWorkstation = false
   ): { success: boolean; user?: User; error?: string } {
     const cleanId = identifier.trim().toLowerCase();
     const cleanPass = password.trim();
@@ -332,6 +398,7 @@ class AuthEngine {
         (u.email && u.email.toLowerCase() === cleanId)
     );
 
+    let fromCloudOnly = false;
     if (!matched) {
       const cloudMatched = this.globalCloudUsers.find(
         (u) =>
@@ -341,7 +408,7 @@ class AuthEngine {
 
       if (cloudMatched) {
         matched = cloudMatched;
-        this.users = [cloudMatched, ...this.users];
+        fromCloudOnly = true;
       }
     }
 
@@ -352,7 +419,7 @@ class AuthEngine {
       };
     }
 
-    const expectedPass = matched.password || 'AutoPulse@2026!';
+    const expectedPass = (matched.password || 'AutoPulse@2026!').trim();
     if (expectedPass !== cleanPass) {
       return {
         success: false,
@@ -360,7 +427,13 @@ class AuthEngine {
       };
     }
 
+    if (fromCloudOnly) {
+      this.users = [matched, ...this.users];
+    }
+
+    this.rememberSession = rememberWorkstation;
     this.currentUser = matched;
+    syncEngine.recordAuditEvent(`Operator ${matched.name} (${matched.role}) signed in via desktop portal`, 'SECURITY', false);
     this.saveState();
     return { success: true, user: matched };
   }
@@ -379,7 +452,7 @@ class AuthEngine {
     const nameTrim = userData.name.trim();
     const usernameTrim = userData.username.trim().toLowerCase();
     const emailTrim = userData.email.trim().toLowerCase();
-    const pass = userData.password;
+    const pass = userData.password.trim();
 
     if (!nameTrim) {
       return { success: false, error: 'Full legal/display name is required.' };
@@ -396,7 +469,7 @@ class AuthEngine {
       };
     }
 
-    if (!emailTrim || !emailTrim.includes('@')) {
+    if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
       return { success: false, error: 'A valid work email address is required.' };
     }
 
@@ -431,7 +504,7 @@ class AuthEngine {
       'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80';
 
     const newUser: User = {
-      id: `user-${Date.now()}`,
+      id: createUniqueUserId('user'),
       name: nameTrim,
       username: usernameTrim,
       email: emailTrim,
@@ -449,6 +522,7 @@ class AuthEngine {
     this.users = [newUser, ...this.users];
     this.globalCloudUsers = [newUser, ...this.globalCloudUsers];
     syncEngine.queueUserMutation('CREATE', newUser);
+    syncEngine.recordAuditEvent(`Registered new user ${newUser.name} (${newUser.role})`, 'SECURITY', false);
     this.currentUser = newUser;
     this.saveState();
 
@@ -483,7 +557,7 @@ class AuthEngine {
 
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const session: PasswordResetSession = {
-      id: `reset-sess-${Date.now()}`,
+      id: createUniqueUserId('reset-sess'),
       userId: target.id,
       userName: target.name,
       userEmail: target.email,
@@ -497,6 +571,7 @@ class AuthEngine {
       session,
       ...this.passwordResetSessions.filter((s) => s.userId !== target.id),
     ];
+    syncEngine.recordAuditEvent(`Password recovery OTP issued for ${target.email}`, 'SECURITY', false);
     this.saveState();
 
     return {
@@ -543,7 +618,10 @@ class AuthEngine {
     newPassword: string
   ): { success: boolean; user?: User; error?: string } {
     const clean = identifier.trim().toLowerCase();
-    const strength = evaluatePasswordStrength(newPassword);
+    const cleanCode = code.trim();
+    const cleanNewPass = newPassword.trim();
+
+    const strength = evaluatePasswordStrength(cleanNewPass);
     if (!strength.isValid) {
       return {
         success: false,
@@ -554,34 +632,50 @@ class AuthEngine {
     const session = this.passwordResetSessions.find(
       (s) =>
         (s.username.toLowerCase() === clean || s.userEmail.toLowerCase() === clean) &&
-        (s.status === 'VERIFIED' || s.verificationCode === code.trim())
+        s.status !== 'COMPLETED'
     );
 
     if (!session) {
-      return { success: false, error: 'No verified recovery session found.' };
+      return { success: false, error: 'No active recovery session found.' };
+    }
+
+    if (new Date(session.expiresAt).getTime() < Date.now()) {
+      return { success: false, error: 'The recovery code has expired. Please request a new one.' };
+    }
+
+    if (!cleanCode || session.verificationCode !== cleanCode) {
+      return { success: false, error: 'Invalid verification code for this recovery session.' };
     }
 
     const userIndex = this.users.findIndex((u) => u.id === session.userId);
     if (userIndex !== -1) {
-      this.users[userIndex].password = newPassword;
+      this.users[userIndex] = { ...this.users[userIndex], password: cleanNewPass };
     }
 
     const cloudIndex = this.globalCloudUsers.findIndex((u) => u.id === session.userId);
     if (cloudIndex !== -1) {
-      this.globalCloudUsers[cloudIndex].password = newPassword;
+      this.globalCloudUsers[cloudIndex] = {
+        ...this.globalCloudUsers[cloudIndex],
+        password: cleanNewPass,
+      };
     }
 
-    const updatedUser = this.users[userIndex] || this.globalCloudUsers[cloudIndex];
+    const updatedUser =
+      (userIndex !== -1 ? this.users[userIndex] : undefined) ||
+      (cloudIndex !== -1 ? this.globalCloudUsers[cloudIndex] : undefined);
+
+    if (!updatedUser) {
+      return { success: false, error: 'Associated user account could not be located.' };
+    }
+
+    if (userIndex === -1) {
+      this.users = [updatedUser, ...this.users];
+    }
 
     session.status = 'COMPLETED';
-    if (this.currentUser?.id === session.userId) {
-      this.currentUser.password = newPassword;
-    }
-
-    if (updatedUser) {
-      syncEngine.queueUserMutation('UPDATE', updatedUser);
-      this.currentUser = updatedUser;
-    }
+    syncEngine.queueUserMutation('UPDATE', updatedUser);
+    syncEngine.recordAuditEvent(`Password updated via OTP recovery for ${updatedUser.email}`, 'SECURITY', false);
+    this.currentUser = updatedUser;
 
     this.saveState();
     return { success: true, user: updatedUser };
@@ -602,7 +696,16 @@ class AuthEngine {
     jobTitle?: string;
     avatarUrl?: string;
   }): { success: boolean; user?: User; error?: string } {
+    const nameTrim = userData.name.trim();
     const emailNorm = userData.email.trim().toLowerCase();
+
+    if (!nameTrim) {
+      return { success: false, error: 'Full name is required.' };
+    }
+
+    if (!emailNorm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+      return { success: false, error: 'A valid work email address is required.' };
+    }
 
     const existing = this.globalCloudUsers.find((u) => u.email.trim().toLowerCase() === emailNorm);
     if (existing) {
@@ -624,9 +727,9 @@ class AuthEngine {
       'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80';
 
     const newUser: User = {
-      id: `user-${Date.now()}`,
-      name: userData.name.trim(),
-      username: emailNorm.split('@')[0],
+      id: createUniqueUserId('user'),
+      name: nameTrim,
+      username: this.buildUniqueUsername(emailNorm.split('@')[0]),
       email: emailNorm,
       password: 'AutoPulse@2026!',
       role: userData.role,
@@ -642,6 +745,7 @@ class AuthEngine {
     this.users = [newUser, ...this.users];
     this.globalCloudUsers = [newUser, ...this.globalCloudUsers];
     syncEngine.queueUserMutation('CREATE', newUser);
+    syncEngine.recordAuditEvent(`Registered terminal user ${newUser.name} (${newUser.role})`, 'SECURITY', false);
     this.currentUser = newUser;
     this.saveState();
 
@@ -675,25 +779,47 @@ class AuthEngine {
     }
 
     this.currentUser = target;
+    syncEngine.recordAuditEvent(`Linked existing cloud operator ${target.name} to terminal`, 'SECURITY', false);
     this.saveState();
 
     return { success: true, user: target };
   }
 
-  public loginWithEmail(email: string, password?: string): { success: boolean; error?: string } {
-    const matched = this.users.find(
-      (u) => u.email.trim().toLowerCase() === email.trim().toLowerCase()
+  public loginWithEmail(email: string, password: string): { success: boolean; error?: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = (password ?? '').trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return { success: false, error: 'Email and password are required.' };
+    }
+
+    let matched = this.users.find(
+      (u) => u.email.trim().toLowerCase() === cleanEmail
     );
+    let fromCloudOnly = false;
+    if (!matched) {
+      matched = this.globalCloudUsers.find(
+        (u) => u.email.trim().toLowerCase() === cleanEmail
+      );
+      fromCloudOnly = !!matched;
+    }
+
     if (!matched) {
       return { success: false, error: 'User account not found' };
     }
-    if (password !== undefined && password.trim().length > 0) {
-      const expectedPass = matched.password || 'AutoPulse@2026!';
-      if (password.trim() !== expectedPass) {
-        return { success: false, error: 'Incorrect password for this account' };
-      }
+
+    const expectedPass = (matched.password || 'AutoPulse@2026!').trim();
+    if (cleanPass !== expectedPass) {
+      return { success: false, error: 'Incorrect password for this account' };
     }
+
+    if (fromCloudOnly) {
+      this.users = [matched, ...this.users];
+    }
+
+    this.rememberSession = false;
     this.currentUser = matched;
+    syncEngine.recordAuditEvent(`Operator ${matched.name} signed in via email/password`, 'SECURITY', false);
     this.saveState();
     return { success: true };
   }
@@ -701,7 +827,9 @@ class AuthEngine {
   public loginWithPin(pin: string): { success: boolean; user?: User; error?: string } {
     const matched = this.users.find((u) => u.pinCode === pin);
     if (matched) {
+      this.rememberSession = false;
       this.currentUser = matched;
+      syncEngine.recordAuditEvent(`Operator ${matched.name} unlocked bay terminal with PIN`, 'SECURITY', false);
       this.saveState();
       return { success: true, user: matched };
     }
@@ -710,6 +838,7 @@ class AuthEngine {
 
   public loginAsRole(role: UserRole): User {
     const user = this.users.find((u) => u.role === role) || this.users[0];
+    this.rememberSession = false;
     this.currentUser = user;
     this.saveState();
     return user;
@@ -726,7 +855,9 @@ class AuthEngine {
     if (user.pinCode !== pin) {
       return { success: false, error: 'Incorrect 4-digit PIN for ' + user.name };
     }
+    this.rememberSession = false;
     this.currentUser = user;
+    syncEngine.recordAuditEvent(`Switched active terminal operator to ${user.name}`, 'SECURITY', false);
     this.saveState();
     return { success: true, user };
   }
@@ -734,6 +865,7 @@ class AuthEngine {
   public loginAsUser(userId: string): boolean {
     const user = this.users.find((u) => u.id === userId);
     if (user) {
+      this.rememberSession = false;
       this.currentUser = user;
       this.saveState();
       return true;
@@ -742,11 +874,17 @@ class AuthEngine {
   }
 
   public logout(): void {
+    const name = this.currentUser?.name;
     this.currentUser = null;
+    this.rememberSession = false;
     try {
       sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem(STORAGE_KEYS.PERSISTENT_SESSION);
     } catch {
       // ignore storage failure
+    }
+    if (name) {
+      syncEngine.recordAuditEvent(`Operator ${name} signed out`, 'SECURITY', false);
     }
     this.saveState();
   }
@@ -792,7 +930,7 @@ class AuthEngine {
     }
 
     const newRequest: PinResetRequest = {
-      id: `req-${Date.now()}`,
+      id: createUniqueUserId('req'),
       userId: user.id,
       userName: user.name,
       userRole: user.role,
@@ -801,7 +939,8 @@ class AuthEngine {
       status: 'PENDING',
     };
 
-    this.pinRequests.unshift(newRequest);
+    this.pinRequests = [newRequest, ...this.pinRequests];
+    syncEngine.recordAuditEvent(`PIN reset request submitted for ${user.name}`, 'SECURITY', false);
     this.saveState();
 
     return {
@@ -811,7 +950,18 @@ class AuthEngine {
     };
   }
 
-  public sendResetPrompt(requestId: string): { success: boolean; message: string } {
+  public sendResetPrompt(requestId: string): {
+    success: boolean;
+    message: string;
+    verificationCode?: string;
+  } {
+    if (this.currentUser && !hasPermission(this.currentUser, 'system:manage_users')) {
+      return {
+        success: false,
+        message: 'Permission denied: IT Administrator authorization required.',
+      };
+    }
+
     const reqIndex = this.pinRequests.findIndex((r) => r.id === requestId);
     if (reqIndex === -1) {
       return { success: false, message: 'Reset request not found.' };
@@ -822,20 +972,33 @@ class AuthEngine {
       return { success: false, message: 'Reset request is no longer pending.' };
     }
 
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
     this.pinRequests[reqIndex] = {
       ...req,
       status: 'PROMPTED',
+      verificationCode,
       promptedAt: new Date().toISOString(),
     };
 
+    syncEngine.recordAuditEvent(
+      `IT Admin dispatched PIN reset prompt for ${req.userName} (Token: ${verificationCode})`,
+      'SECURITY',
+      false
+    );
     this.saveState();
     return {
       success: true,
-      message: `Reset prompt dispatched to ${req.userName}. The user will be prompted to choose their new PIN.`,
+      verificationCode,
+      message: `Reset prompt dispatched to ${req.userName}. Dispatch code: ${verificationCode}`,
     };
   }
 
-  public completePinReset(userId: string, newPin: string): { success: boolean; message: string } {
+  public completePinReset(
+    userId: string,
+    newPin: string,
+    verification?: { dispatchCode?: string; password?: string }
+  ): { success: boolean; message: string } {
     if (!/^\d{4}$/.test(newPin)) {
       return { success: false, message: 'PIN must be exactly 4 numeric digits.' };
     }
@@ -848,28 +1011,58 @@ class AuthEngine {
     const reqIndex = this.pinRequests.findIndex(
       (r) => r.userId === userId && r.status === 'PROMPTED'
     );
-
-    this.users[userIndex].pinCode = newPin;
-
-    const cloudIndex = this.globalCloudUsers.findIndex((u) => u.id === userId);
-    if (cloudIndex !== -1) {
-      this.globalCloudUsers[cloudIndex].pinCode = newPin;
-    }
-
-    if (this.currentUser?.id === userId) {
-      this.currentUser.pinCode = newPin;
-    }
-
-    syncEngine.queueUserMutation('UPDATE', this.users[userIndex]);
-
-    if (reqIndex !== -1) {
-      this.pinRequests[reqIndex] = {
-        ...this.pinRequests[reqIndex],
-        status: 'COMPLETED',
-        completedAt: new Date().toISOString(),
+    if (reqIndex === -1) {
+      return {
+        success: false,
+        message: 'No IT-approved reset prompt is active for this account.',
       };
     }
 
+    const activeReq = this.pinRequests[reqIndex];
+    const targetUser = this.users[userIndex];
+    const isSelfAuthenticated = this.currentUser?.id === userId;
+
+    if (!isSelfAuthenticated) {
+      const codeMatches =
+        !!activeReq.verificationCode &&
+        verification?.dispatchCode?.trim() === activeReq.verificationCode;
+      const passwordMatches =
+        !!verification?.password?.trim() &&
+        verification.password.trim() === (targetUser.password || 'AutoPulse@2026!').trim();
+
+      if (!codeMatches && !passwordMatches) {
+        return {
+          success: false,
+          message:
+            'Verification required: enter the 6-digit IT dispatch code or your account password.',
+        };
+      }
+    }
+
+    const updatedUser: User = { ...targetUser, pinCode: newPin };
+    this.users[userIndex] = updatedUser;
+
+    const cloudIndex = this.globalCloudUsers.findIndex((u) => u.id === userId);
+    if (cloudIndex !== -1) {
+      this.globalCloudUsers[cloudIndex] = {
+        ...this.globalCloudUsers[cloudIndex],
+        pinCode: newPin,
+      };
+    }
+
+    if (this.currentUser?.id === userId) {
+      this.currentUser = { ...this.currentUser, pinCode: newPin };
+    }
+
+    syncEngine.queueUserMutation('UPDATE', updatedUser);
+
+    this.pinRequests[reqIndex] = {
+      ...activeReq,
+      status: 'COMPLETED',
+      completedAt: new Date().toISOString(),
+    };
+
+    syncEngine.recordAuditEvent(`PIN successfully updated for ${updatedUser.name}`, 'SECURITY', false);
     this.saveState();
     return {
       success: true,

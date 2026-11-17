@@ -95,7 +95,7 @@ export const DesktopAuthScreen: React.FC<DesktopAuthScreenProps> = ({
     setIsLoading(true);
 
     setTimeout(() => {
-      const res = authEngine.loginWithCredentials(identifier, password);
+      const res = authEngine.loginWithCredentials(identifier, password, rememberWorkstation);
       setIsLoading(false);
       if (res.success) {
         onLoginSuccess();
@@ -448,7 +448,13 @@ export const DesktopAuthScreen: React.FC<DesktopAuthScreenProps> = ({
                     data-active={mode === m.id}
                     onClick={() => {
                       setMode(m.id);
-                      if (m.id === 'FORGOT_PASSWORD') setRecoveryStep(1);
+                      if (m.id === 'FORGOT_PASSWORD') {
+                        setRecoveryStep(1);
+                        setRecoveryCode('');
+                        setSimulatedCode(null);
+                        setNewPassword('');
+                        setNewConfirmPassword('');
+                      }
                       setErrorMessage(null);
                       setSuccessMessage(null);
                     }}
@@ -534,7 +540,12 @@ export const DesktopAuthScreen: React.FC<DesktopAuthScreenProps> = ({
                         setMode('FORGOT_PASSWORD');
                         setRecoveryIdentifier(identifier);
                         setRecoveryStep(1);
+                        setRecoveryCode('');
+                        setSimulatedCode(null);
+                        setNewPassword('');
+                        setNewConfirmPassword('');
                         setErrorMessage(null);
+                        setSuccessMessage(null);
                       }}
                       style={{
                         background: 'transparent',
