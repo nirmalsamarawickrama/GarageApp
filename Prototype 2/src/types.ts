@@ -78,6 +78,7 @@ export interface InventoryItem {
 
 export interface Employee {
   id: string;
+  userId?: string;
   name: string;
   role:
     | 'Master Technician'
@@ -195,8 +196,16 @@ export interface PinResetRequest {
   userEmail: string;
   requestedAt: string;
   status: 'PENDING' | 'PROMPTED' | 'COMPLETED';
+  verificationCode?: string;
   promptedAt?: string;
   completedAt?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  event: string;
+  status: 'OK' | 'SECURITY' | 'SYNC' | 'WARN';
 }
 
 export interface PasswordResetSession {
