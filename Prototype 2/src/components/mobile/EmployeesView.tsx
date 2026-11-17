@@ -1,16 +1,22 @@
 import React from 'react';
 import { UserCheck, Clock, Play, Square, Award, Users, CheckCircle2 } from 'lucide-react';
-import { Employee } from '../../types';
+import { Employee, User } from '../../types';
 import { AvatarBadge } from '../shared/AvatarBadge';
 
 interface EmployeesViewProps {
   employees: Employee[];
   onToggleClock: (empId: string) => void;
+  currentUser?: User | null;
+  canManageRoster?: boolean;
+  canClockSelf?: boolean;
 }
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
   employees,
   onToggleClock,
+  currentUser = null,
+  canManageRoster = true,
+  canClockSelf = true,
 }) => {
   const activeWorkingCount = employees.filter((e) => e.status === 'Working on Job').length;
   const avgEfficiency =
@@ -65,6 +71,11 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {employees.map((emp, idx) => {
             const isWorking = emp.status === 'Working on Job';
+            const isSelf =
+              !!currentUser &&
+              (emp.userId === currentUser.id ||
+                emp.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase());
+            const canClockThisEmp = canManageRoster || (canClockSelf && isSelf);
 
             return (
               <article
@@ -176,22 +187,24 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => onToggleClock(emp.id)}
-                  className={`sg-btn ${isWorking ? 'sg-btn-danger' : 'sg-btn-primary'}`}
-                  style={{ width: '100%' }}
-                >
-                  {isWorking ? (
-                    <>
-                      <Square size={14} /> Clock-Out from Active Job
-                    </>
-                  ) : (
-                    <>
-                      <Play size={14} /> Clock-In to Workshop Bay
-                    </>
-                  )}
-                </button>
+                {canClockThisEmp && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleClock(emp.id)}
+                    className={`sg-btn ${isWorking ? 'sg-btn-danger' : 'sg-btn-primary'}`}
+                    style={{ width: '100%' }}
+                  >
+                    {isWorking ? (
+                      <>
+                        <Square size={14} /> Clock-Out from Active Job
+                      </>
+                    ) : (
+                      <>
+                        <Play size={14} /> Clock-In to Workshop Bay
+                      </>
+                    )}
+                  </button>
+                )}
               </article>
             );
           })}

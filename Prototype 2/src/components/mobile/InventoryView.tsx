@@ -8,49 +8,107 @@ import {
   Search,
   Boxes,
   Sparkles,
+  X,
+  AlertCircle,
 } from 'lucide-react';
-import { InventoryItem } from '../../types';
+import { InventoryItem, PartCategory } from '../../types';
 import { INITIAL_BRANCHES } from '../../data/mockData';
 
 interface InventoryViewProps {
   inventory: InventoryItem[];
   onOpenScanner: () => void;
   onUpdateStock: (itemId: string, delta: number) => void;
-  onTransferStock: (itemId: string, targetBranchId: string, qty: number) => void;
+  onTransferStock: (itemId: string, targetBranchId: string, qty: number) => boolean;
+  canAdjustStock?: boolean;
+  canTransferStock?: boolean;
+  canScanBarcode?: boolean;
 }
+
+const CATEGORIES: ('ALL' | PartCategory)[] = [
+  'ALL',
+  'Brakes',
+  'Fluids & Oils',
+  'Filters',
+  'Engine',
+  'Suspension',
+  'Electrical',
+];
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
   inventory,
   onOpenScanner,
   onUpdateStock,
   onTransferStock,
+  canAdjustStock = true,
+  canTransferStock = true,
+  canScanBarcode = true,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [transferModalItem, setTransferModalItem] = useState<InventoryItem | null>(null);
-  const [transferQty, setTransferQty] = useState(1);
-  const [targetBranch, setTargetBranch] = useState('branch-2');
+  const [selectedCategory, setSelectedCategory] = useState<'ALL' | PartCategory>('ALL');
+  const [transferItemId, setTransferItemId] = useState<string | null>(null);
+  const [transferQtyInput, setTransferQtyInput] = useState('1');
+  const [targetBranch, setTargetBranch] = useState('');
+  const [transferError, setTransferError] = useState<string | null>(null);
+
+  const transferModalItem = transferItemId
+    ? inventory.find((i) => i.id === transferItemId) || null
+    : null;
+
+  const destinationBranches = transferModalItem
+    ? INITIAL_BRANCHES.filter((b) => b.id !== transferModalItem.branchId)
+    : INITIAL_BRANCHES;
 
   const lowStockItems = inventory.filter((item) => item.stockQty <= item.minSafetyStock);
 
   const filteredItems = inventory.filter((item) => {
     const matchesCat = selectedCategory === 'ALL' || item.category === selectedCategory;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
       q === '' ||
       item.name.toLowerCase().includes(q) ||
       item.sku.toLowerCase().includes(q) ||
-      item.oemNumber.toLowerCase().includes(q);
+      item.oemNumber.toLowerCase().includes(q) ||
+      item.barcode.toLowerCase().includes(q);
     return matchesCat && matchesSearch;
   });
 
-  const categories = ['ALL', 'Brakes', 'Fluids & Oils', 'Filters', 'Engine', 'Suspension'];
+  const openTransferModal = (item: InventoryItem) => {
+    const firstDest = INITIAL_BRANCHES.find((b) => b.id !== item.branchId)?.id || '';
+    setTransferItemId(item.id);
+    setTargetBranch(firstDest);
+    setTransferQtyInput('1');
+    setTransferError(null);
+  };
+
+  const closeTransferModal = () => {
+    setTransferItemId(null);
+    setTransferError(null);
+  };
 
   const handleConfirmTransfer = () => {
-    if (transferModalItem && transferQty > 0) {
-      onTransferStock(transferModalItem.id, targetBranch, transferQty);
-      setTransferModalItem(null);
+    if (!transferModalItem) return;
+    const qty = Number(transferQtyInput);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setTransferError('Enter a valid positive transfer quantity.');
+      return;
     }
+    if (qty > transferModalItem.stockQty) {
+      setTransferError(
+        `Cannot transfer ${qty} ${transferModalItem.unitOfMeasure}; only ${transferModalItem.stockQty} available.`
+      );
+      return;
+    }
+    if (!targetBranch || targetBranch === transferModalItem.branchId) {
+      setTransferError('Select a different destination branch.');
+      return;
+    }
+
+    const ok = onTransferStock(transferModalItem.id, targetBranch, qty);
+    if (!ok) {
+      setTransferError('Transfer could not be completed. Check available stock and branch.');
+      return;
+    }
+    closeTransferModal();
   };
 
   return (
@@ -121,23 +179,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       </section>
 
       {/* SECTOR 2: Inventory Scanner Tool */}
-      <section>
-        <div className="sg-sector-header">
-          <span className="sg-sector-title">
-            <Sparkles size={14} /> Sector 2 &bull; Inventory Scanner Tool
-          </span>
-          <span className="sg-sector-subtitle">Barcode &amp; QR intake</span>
-        </div>
+      {canScanBarcode && (
+        <section>
+          <div className="sg-sector-header">
+            <span className="sg-sector-title">
+              <Sparkles size={14} /> Sector 2 &bull; Inventory Scanner Tool
+            </span>
+            <span className="sg-sector-subtitle">Barcode &amp; QR intake</span>
+          </div>
 
-        <button
-          type="button"
-          onClick={onOpenScanner}
-          className="sg-btn sg-btn-volt sg-btn-lg"
-          style={{ width: '100%' }}
-        >
-          <Camera size={18} /> Launch Optical Barcode Scanner
-        </button>
-      </section>
+          <button
+            type="button"
+            onClick={onOpenScanner}
+            className="sg-btn sg-btn-volt sg-btn-lg"
+            style={{ width: '100%' }}
+          >
+            <Camera size={18} /> Launch Optical Barcode Scanner
+          </button>
+        </section>
+      )}
 
       {/* SECTOR 3: Parts Catalog */}
       <section>
@@ -145,7 +205,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <span className="sg-sector-title">
             <Boxes size={14} /> Sector 3 &bull; Parts Catalog ({filteredItems.length})
           </span>
-          <span className="sg-sector-subtitle">Live stock adjustment</span>
+          <span className="sg-sector-subtitle">
+            {canAdjustStock ? 'Live stock adjustment' : 'Read-only branch catalog'}
+          </span>
         </div>
 
         <div style={{ position: 'relative', marginBottom: '12px' }}>
@@ -157,7 +219,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <input
             type="text"
             className="sg-input"
-            placeholder="Search by part name, SKU, OEM number..."
+            placeholder="Search by part name, SKU, OEM, barcode..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{ paddingLeft: '36px' }}
@@ -165,7 +227,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '6px', marginBottom: '14px' }}>
-          {categories.map((cat) => {
+          {CATEGORIES.map((cat) => {
             const isSelected = selectedCategory === cat;
             return (
               <button
@@ -235,15 +297,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button
-                      type="button"
-                      onClick={() => onUpdateStock(item.id, -1)}
-                      className="sg-btn sg-btn-danger sg-btn-sm"
-                      style={{ width: '36px', minHeight: '36px', padding: 0 }}
-                      aria-label={`Deduct 1 ${item.name}`}
-                    >
-                      <Minus size={14} />
-                    </button>
+                    {canAdjustStock && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStock(item.id, -1)}
+                        disabled={item.stockQty <= 0}
+                        className="sg-btn sg-btn-danger sg-btn-sm"
+                        style={{ width: '36px', minHeight: '36px', padding: 0 }}
+                        aria-label={`Deduct 1 ${item.name}`}
+                      >
+                        <Minus size={14} />
+                      </button>
+                    )}
 
                     <div style={{ textAlign: 'center', minWidth: '48px' }}>
                       <div
@@ -260,15 +325,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{item.unitOfMeasure}</div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => onUpdateStock(item.id, 1)}
-                      className="sg-btn sg-btn-emerald sg-btn-sm"
-                      style={{ width: '36px', minHeight: '36px', padding: 0 }}
-                      aria-label={`Restock 1 ${item.name}`}
-                    >
-                      <Plus size={14} />
-                    </button>
+                    {canAdjustStock && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStock(item.id, 1)}
+                        className="sg-btn sg-btn-emerald sg-btn-sm"
+                        style={{ width: '36px', minHeight: '36px', padding: 0 }}
+                        aria-label={`Restock 1 ${item.name}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -276,13 +343,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
                     Safety Min: {item.minSafetyStock}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setTransferModalItem(item)}
-                    className="sg-btn sg-btn-secondary sg-btn-sm"
-                  >
-                    <ArrowLeftRight size={12} /> Transfer Branch
-                  </button>
+                  {canTransferStock && (
+                    <button
+                      type="button"
+                      disabled={item.stockQty <= 0}
+                      onClick={() => openTransferModal(item)}
+                      className="sg-btn sg-btn-secondary sg-btn-sm"
+                    >
+                      <ArrowLeftRight size={12} /> Transfer Branch
+                    </button>
+                  )}
                 </div>
               </article>
             );
@@ -296,6 +366,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <div className="sg-modal" style={{ maxWidth: '420px' }}>
             <div className="sg-modal-header">
               <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Inter-Branch Stock Transfer</h3>
+              <button
+                type="button"
+                onClick={closeTransferModal}
+                className="sg-btn sg-btn-secondary sg-btn-sm"
+                aria-label="Close transfer modal"
+              >
+                <X size={16} />
+              </button>
             </div>
             <div className="sg-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
@@ -303,14 +381,36 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <span className="tabular">{transferModalItem.stockQty}</span>)
               </p>
 
+              {transferError && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--accent-danger-tint)',
+                    border: '1px solid var(--accent-danger)',
+                    color: 'var(--accent-danger)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                  <span>{transferError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="sg-label">Destination Branch</label>
                 <select
                   className="sg-select"
                   value={targetBranch}
-                  onChange={(e) => setTargetBranch(e.target.value)}
+                  onChange={(e) => {
+                    setTargetBranch(e.target.value);
+                    setTransferError(null);
+                  }}
                 >
-                  {INITIAL_BRANCHES.map((b) => (
+                  {destinationBranches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -319,21 +419,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               <div>
-                <label className="sg-label">Quantity to Transfer</label>
+                <label className="sg-label">
+                  Quantity to Transfer (Max: {transferModalItem.stockQty})
+                </label>
                 <input
                   type="number"
                   min="1"
                   max={transferModalItem.stockQty}
                   className="sg-input sg-input-mono"
-                  value={transferQty}
-                  onChange={(e) => setTransferQty(Number(e.target.value))}
+                  value={transferQtyInput}
+                  onChange={(e) => {
+                    setTransferQtyInput(e.target.value);
+                    setTransferError(null);
+                  }}
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button
                   type="button"
-                  onClick={() => setTransferModalItem(null)}
+                  onClick={closeTransferModal}
                   className="sg-btn sg-btn-secondary"
                   style={{ flex: 1 }}
                 >

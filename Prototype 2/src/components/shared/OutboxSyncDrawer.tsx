@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, CloudUpload, Clock, CheckCircle2, RefreshCw } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, CloudUpload, Clock, CheckCircle2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { SyncMutation } from '../../types';
 
 interface OutboxSyncDrawerProps {
@@ -7,7 +7,21 @@ interface OutboxSyncDrawerProps {
   onClose: () => void;
   outbox: SyncMutation[];
   isOnline: boolean;
-  onTriggerSync: () => void;
+  onTriggerSync: () => Promise<void> | void;
+  canTriggerSync?: boolean;
+}
+
+function formatSafePayloadPreview(payload: Record<string, unknown>): string {
+  const sanitized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === 'password' || k === 'pinCode') {
+      sanitized[k] = '••••';
+    } else {
+      sanitized[k] = v;
+    }
+  }
+  const str = JSON.stringify(sanitized);
+  return str.length > 120 ? `${str.slice(0, 120)}...` : str;
 }
 
 export const OutboxSyncDrawer: React.FC<OutboxSyncDrawerProps> = ({
@@ -16,8 +30,21 @@ export const OutboxSyncDrawer: React.FC<OutboxSyncDrawerProps> = ({
   outbox,
   isOnline,
   onTriggerSync,
+  canTriggerSync = true,
 }) => {
+  const [isSyncing, setIsSyncing] = useState(false);
+
   if (!isOpen) return null;
+
+  const handleSync = async () => {
+    if (isSyncing || !isOnline || !canTriggerSync) return;
+    setIsSyncing(true);
+    try {
+      await onTriggerSync();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   return (
     <div className="sg-drawer-backdrop" role="dialog" aria-modal="true" aria-label="Offline Outbox Queue">
@@ -57,13 +84,15 @@ export const OutboxSyncDrawer: React.FC<OutboxSyncDrawerProps> = ({
                 {isOnline ? 'ONLINE // SYNC READY' : 'OFFLINE // ROOM DB QUEUEING'}
               </span>
 
-              {isOnline && outbox.length > 0 && (
+              {isOnline && canTriggerSync && outbox.length > 0 && (
                 <button
                   type="button"
-                  onClick={onTriggerSync}
+                  disabled={isSyncing}
+                  onClick={handleSync}
                   className="sg-btn sg-btn-volt sg-btn-sm"
                 >
-                  <RefreshCw size={12} /> Sync Now
+                  <RefreshCw size={12} className={isSyncing ? 'animate-spin' : ''} />
+                  {isSyncing ? 'Syncing...' : 'Sync Now'}
                 </button>
               )}
             </div>
@@ -98,11 +127,22 @@ export const OutboxSyncDrawer: React.FC<OutboxSyncDrawerProps> = ({
                     <span
                       className="sg-badge"
                       style={{
-                        color: mut.status === 'SYNCED' ? 'var(--accent-secondary)' : 'var(--accent-amber)',
-                        background: mut.status === 'SYNCED' ? 'var(--accent-secondary-tint)' : 'var(--accent-amber-tint)',
+                        color:
+                          mut.status === 'SYNCED'
+                            ? 'var(--accent-secondary)'
+                            : mut.status === 'FAILED'
+                            ? 'var(--accent-danger)'
+                            : 'var(--accent-amber)',
+                        background:
+                          mut.status === 'SYNCED'
+                            ? 'var(--accent-secondary-tint)'
+                            : mut.status === 'FAILED'
+                            ? 'var(--accent-danger-tint)'
+                            : 'var(--accent-amber-tint)',
                       }}
                     >
-                      <Clock size={10} /> {mut.status}
+                      {mut.status === 'FAILED' ? <AlertTriangle size={10} /> : <Clock size={10} />}{' '}
+                      {mut.status}
                     </span>
                   </div>
 
@@ -117,11 +157,12 @@ export const OutboxSyncDrawer: React.FC<OutboxSyncDrawerProps> = ({
                       wordBreak: 'break-all',
                     }}
                   >
-                    {JSON.stringify(mut.payload).slice(0, 120)}
+                    {formatSafePayloadPreview(mut.payload)}
                   </div>
 
                   <div className="tabular" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', marginTop: '6px' }}>
                     Logged at: {new Date(mut.timestamp).toLocaleTimeString()}
+                    {mut.retryCount > 0 ? ` • Retries: ${mut.retryCount}` : ''}
                   </div>
                 </div>
               ))}

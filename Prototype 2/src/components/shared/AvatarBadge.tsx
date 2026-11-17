@@ -7,7 +7,8 @@ interface AvatarBadgeProps {
 }
 
 export const AvatarBadge: React.FC<AvatarBadgeProps> = ({ src, name, size = 36 }) => {
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = !!src && failedSrc === src;
 
   const initials = name
     .split(' ')
@@ -45,7 +46,7 @@ export const AvatarBadge: React.FC<AvatarBadgeProps> = ({ src, name, size = 36 }
     <img
       src={src}
       alt={name}
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src)}
       style={{
         width: `${size}px`,
         height: `${size}px`,

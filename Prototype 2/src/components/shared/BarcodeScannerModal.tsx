@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Check, Barcode, Search } from 'lucide-react';
 import { InventoryItem } from '../../types';
 
@@ -7,9 +7,11 @@ interface BarcodeScannerModalProps {
   onClose: () => void;
   inventory: InventoryItem[];
   onItemScanned: (item: InventoryItem, action: 'INSPECT' | 'DEDUCT' | 'RESTOCK') => void;
+  canRestock?: boolean;
+  canDeduct?: boolean;
 }
 
-const ACTIONS: { id: 'DEDUCT' | 'RESTOCK' | 'INSPECT'; label: string }[] = [
+const ALL_ACTIONS: { id: 'DEDUCT' | 'RESTOCK' | 'INSPECT'; label: string }[] = [
   { id: 'DEDUCT', label: '-1 Deduct to Job' },
   { id: 'RESTOCK', label: '+5 Restock' },
   { id: 'INSPECT', label: 'Lookup SKU' },
@@ -20,14 +22,50 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onClose,
   inventory,
   onItemScanned,
+  canRestock = true,
+  canDeduct = true,
 }) => {
-  const [selectedAction, setSelectedAction] = useState<'DEDUCT' | 'RESTOCK' | 'INSPECT'>('DEDUCT');
+  if (!isOpen) return null;
+  return (
+    <BarcodeScannerModalContent
+      onClose={onClose}
+      inventory={inventory}
+      onItemScanned={onItemScanned}
+      canRestock={canRestock}
+      canDeduct={canDeduct}
+    />
+  );
+};
+
+const BarcodeScannerModalContent: React.FC<Omit<BarcodeScannerModalProps, 'isOpen'>> = ({
+  onClose,
+  inventory,
+  onItemScanned,
+  canRestock = true,
+  canDeduct = true,
+}) => {
+  const actions = ALL_ACTIONS.filter((a) => {
+    if (a.id === 'RESTOCK' && !canRestock) return false;
+    if (a.id === 'DEDUCT' && !canDeduct) return false;
+    return true;
+  });
+
+  const [selectedAction, setSelectedAction] = useState<'DEDUCT' | 'RESTOCK' | 'INSPECT'>(
+    actions[0]?.id || 'INSPECT'
+  );
   const [scannedSuccessItem, setScannedSuccessItem] = useState<InventoryItem | null>(null);
   const [lookupQuery, setLookupQuery] = useState('');
+  const scanTimerRef = useRef<number | null>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    return () => {
+      if (scanTimerRef.current !== null) {
+        window.clearTimeout(scanTimerRef.current);
+      }
+    };
+  }, []);
 
-  const activeIdx = ACTIONS.findIndex((a) => a.id === selectedAction);
+  const activeIdx = Math.max(0, actions.findIndex((a) => a.id === selectedAction));
 
   const matchingItems = inventory.filter((item) => {
     const q = lookupQuery.trim().toLowerCase();
@@ -40,13 +78,24 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     );
   });
 
+  const handleClose = () => {
+    if (scanTimerRef.current !== null) {
+      window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    onClose();
+  };
+
   const handleSimulateScan = (item: InventoryItem) => {
+    if (scannedSuccessItem) return;
+    const actionSnapshot = selectedAction;
     setScannedSuccessItem(item);
-    setTimeout(() => {
-      onItemScanned(item, selectedAction);
+    scanTimerRef.current = window.setTimeout(() => {
+      scanTimerRef.current = null;
+      onItemScanned(item, actionSnapshot);
       setScannedSuccessItem(null);
       onClose();
-    }, 1000);
+    }, 900);
   };
 
   return (
@@ -59,7 +108,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="sg-btn sg-btn-secondary sg-btn-sm"
             aria-label="Close scanner"
           >
@@ -69,18 +118,19 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
         <div className="sg-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {/* Sliding Action Selector */}
-          <div className="sg-segmented" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div className="sg-segmented" style={{ gridTemplateColumns: `repeat(${actions.length}, 1fr)` }}>
             <div
               className="sg-segmented-thumb"
               style={{
-                width: 'calc((100% - 6px) / 3)',
+                width: `calc((100% - 6px) / ${actions.length})`,
                 transform: `translateX(${activeIdx * 100}%)`,
               }}
             />
-            {ACTIONS.map((act) => (
+            {actions.map((act) => (
               <button
                 key={act.id}
                 type="button"
+                disabled={!!scannedSuccessItem}
                 className="sg-segmented-btn"
                 data-active={selectedAction === act.id}
                 onClick={() => setSelectedAction(act.id)}
@@ -191,6 +241,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 <button
                   key={item.id}
                   type="button"
+                  disabled={!!scannedSuccessItem}
                   onClick={() => handleSimulateScan(item)}
                   className="sg-card-interactive"
                   style={{
@@ -199,7 +250,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     textAlign: 'left',
-                    cursor: 'pointer',
+                    cursor: scannedSuccessItem ? 'not-allowed' : 'pointer',
                   }}
                 >
                   <div>

@@ -17,20 +17,32 @@ interface WifiDevSyncModalProps {
 }
 
 export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onClose }) => {
+  if (!isOpen) return null;
+  return <WifiDevSyncModalContent onClose={onClose} />;
+};
+
+const WifiDevSyncModalContent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const relayInfo = syncEngine.getWifiRelayInfo();
   const [customUrl, setCustomUrl] = useState(relayInfo.serverUrl);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  if (!isOpen) return null;
+  const handleTestConnection = async (targetUrl?: string) => {
+    const urlToTest = (targetUrl ?? customUrl).trim().replace(/\/+$/, '');
+    if (!/^https?:\/\/.+/i.test(urlToTest)) {
+      setTestResult({
+        success: false,
+        message: 'Enter a valid http:// or https:// URL (e.g. http://192.168.1.2:5173).',
+      });
+      return;
+    }
 
-  const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
     try {
-      const cleanUrl = customUrl.trim().replace(/\/+$/, '');
-      const res = await fetch(`${cleanUrl}/api/sync/status`, { mode: 'cors' });
-      if (res.ok) {
+      const res = await fetch(`${urlToTest}/api/sync/status`, { mode: 'cors' });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setTestResult({
           success: true,
@@ -39,13 +51,13 @@ export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onCl
       } else {
         setTestResult({
           success: false,
-          message: `Server returned HTTP ${res.status}. Verify Vite dev server is running.`,
+          message: `Server returned HTTP ${res.status}. Verify Vite dev/preview server is running.`,
         });
       }
     } catch {
       setTestResult({
         success: false,
-        message: `Failed to reach ${customUrl}. Ensure both devices share the same Wi-Fi network.`,
+        message: `Failed to reach ${urlToTest}. Ensure both devices share the same Wi-Fi network.`,
       });
     } finally {
       setTesting(false);
@@ -53,8 +65,15 @@ export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onCl
   };
 
   const handleSaveAndReconnect = () => {
-    syncEngine.setServerUrl(customUrl);
-    handleTestConnection();
+    const ok = syncEngine.setServerUrl(customUrl);
+    if (!ok) {
+      setTestResult({
+        success: false,
+        message: 'Invalid URL. Must start with http:// or https:// (e.g. http://192.168.1.2:5173).',
+      });
+      return;
+    }
+    void handleTestConnection(customUrl);
   };
 
   return (
@@ -172,7 +191,7 @@ export const WifiDevSyncModal: React.FC<WifiDevSyncModalProps> = ({ isOpen, onCl
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
             <button
               type="button"
-              onClick={handleTestConnection}
+              onClick={() => void handleTestConnection()}
               disabled={testing}
               className="sg-btn sg-btn-secondary"
             >

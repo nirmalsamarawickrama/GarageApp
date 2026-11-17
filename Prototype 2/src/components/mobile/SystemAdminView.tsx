@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Database,
   Key,
@@ -18,78 +18,98 @@ import {
 } from 'lucide-react';
 import { authEngine } from '../../auth/authEngine';
 import { syncEngine } from '../../state/syncEngine';
-import { ROLE_METADATA } from '../../auth/permissions';
+import { ROLE_METADATA, hasPermission } from '../../auth/permissions';
 import { RegisterUserModal } from '../auth/RegisterUserModal';
 import { User } from '../../types';
 import { AvatarBadge } from '../shared/AvatarBadge';
 
-export const SystemAdminView: React.FC = () => {
+interface SystemAdminViewProps {
+  currentUser?: User | null;
+}
+
+export const SystemAdminView: React.FC<SystemAdminViewProps> = ({ currentUser }) => {
   const [users, setUsers] = useState<User[]>(authEngine.getAvailableUsers());
   const [outbox, setOutbox] = useState(syncEngine.getOutbox());
+  const [auditLogs, setAuditLogs] = useState(syncEngine.getAuditLogs());
   const [isOnline, setIsOnline] = useState(syncEngine.getIsOnline());
   const [pendingRequests, setPendingRequests] = useState(authEngine.getPendingPinResetRequests());
+  const [subscribedUser, setSubscribedUser] = useState<User | null>(authEngine.getCurrentUser());
+  const activeOperator = currentUser ?? subscribedUser;
 
   const [isFlushing, setIsFlushing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; isError?: boolean } | null>(
+    null
+  );
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [registerMode, setRegisterMode] = useState<'REGISTER' | 'LINK'>('REGISTER');
+  const statusTimerRef = useRef<number | null>(null);
+
+  const showStatus = (text: string, isError = false, duration = 3500) => {
+    if (statusTimerRef.current !== null) {
+      window.clearTimeout(statusTimerRef.current);
+    }
+    setStatusMessage({ text, isError });
+    statusTimerRef.current = window.setTimeout(() => {
+      setStatusMessage(null);
+      statusTimerRef.current = null;
+    }, duration);
+  };
 
   useEffect(() => {
     const unsubAuth = authEngine.subscribe(() => {
       setUsers(authEngine.getAvailableUsers());
       setPendingRequests(authEngine.getPendingPinResetRequests());
+      setSubscribedUser(authEngine.getCurrentUser());
     });
     const unsubSync = syncEngine.subscribe(() => {
       setOutbox(syncEngine.getOutbox());
+      setAuditLogs(syncEngine.getAuditLogs());
       setIsOnline(syncEngine.getIsOnline());
     });
     return () => {
       unsubAuth();
       unsubSync();
+      if (statusTimerRef.current !== null) {
+        window.clearTimeout(statusTimerRef.current);
+      }
     };
   }, []);
 
+  const canForceSync = hasPermission(activeOperator, 'system:force_sync');
+  const canManageUsers = hasPermission(activeOperator, 'system:manage_users');
+
   const handleForceSync = async () => {
+    if (!canForceSync || !isOnline || isFlushing || outbox.length === 0) return;
     setIsFlushing(true);
     await syncEngine.processOutbox();
     setIsFlushing(false);
-    setStatusMessage('Room SQLite Outbox successfully processed and synced with cloud.');
-    setTimeout(() => setStatusMessage(null), 3000);
+    showStatus('Room SQLite Outbox processed and synced with cloud.');
   };
 
   const handleSendResetPrompt = (requestId: string) => {
     const res = authEngine.sendResetPrompt(requestId);
-    if (res.success) {
-      setStatusMessage(res.message);
-      setTimeout(() => setStatusMessage(null), 4000);
-    } else {
-      setStatusMessage(res.message);
-    }
+    showStatus(res.message, !res.success, 5000);
   };
 
   const handleResetDemo = () => {
+    if (!canForceSync) return;
     syncEngine.resetDemoData();
-    setStatusMessage('Workshop demo dataset restored to baseline state.');
-    setTimeout(() => setStatusMessage(null), 3000);
+    showStatus('Workshop demo dataset restored to baseline state.');
   };
-
-  const auditLogs = [
-    { id: 'log-1', timestamp: '17:04:12', event: 'Room SQLite outbox queue processed (3 mutations dispatched)', status: 'OK' },
-    { id: 'log-2', timestamp: '16:58:30', event: 'Mechanic Dave Miller submitted PIN Reset Request from Bay 2 tablet', status: 'SECURITY' },
-    { id: 'log-3', timestamp: '16:42:19', event: 'Inventory deduction conflict resolved (Last-Write-Wins precedence)', status: 'SYNC' },
-    { id: 'log-4', timestamp: '16:10:05', event: 'Device token refreshed for Samsung Galaxy Tab Active3 (MAC: 48:2C:6A:11)', status: 'OK' },
-    { id: 'log-5', timestamp: '15:30:00', event: 'Room DB automatic backup snapshot saved to internal storage', status: 'OK' },
-  ];
 
   return (
     <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {statusMessage && (
         <div
           style={{
-            background: 'var(--accent-secondary-tint)',
-            border: '2px solid var(--accent-secondary)',
+            background: statusMessage.isError
+              ? 'var(--accent-danger-tint)'
+              : 'var(--accent-secondary-tint)',
+            border: `2px solid ${
+              statusMessage.isError ? 'var(--accent-danger)' : 'var(--accent-secondary)'
+            }`,
             padding: '12px 16px',
-            color: 'var(--accent-secondary)',
+            color: statusMessage.isError ? 'var(--accent-danger)' : 'var(--accent-secondary)',
             fontSize: '13px',
             fontWeight: 700,
             display: 'flex',
@@ -98,7 +118,7 @@ export const SystemAdminView: React.FC = () => {
           }}
         >
           <CheckCircle2 size={16} />
-          <span>{statusMessage}</span>
+          <span>{statusMessage.text}</span>
         </div>
       )}
 
@@ -148,243 +168,250 @@ export const SystemAdminView: React.FC = () => {
                 <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>mutations</span>
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                {outbox.length === 0 ? 'All records flushed' : 'Awaiting network push'}
+                {outbox.length === 0 ? 'All records flushed' : isOnline ? 'Ready for sync' : 'Queued offline'}
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => syncEngine.setOnlineStatus(!isOnline)}
-              className={`sg-btn ${isOnline ? 'sg-btn-secondary' : 'sg-btn-emerald'}`}
-              style={{ flex: 1 }}
-            >
-              {isOnline ? <WifiOff size={15} /> : <Wifi size={15} />}
-              {isOnline ? 'Simulate Offline Mode' : 'Reconnect Network'}
-            </button>
+          {canForceSync && (
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => syncEngine.setOnlineStatus(!isOnline)}
+                className={`sg-btn ${isOnline ? 'sg-btn-secondary' : 'sg-btn-emerald'}`}
+                style={{ flex: 1 }}
+              >
+                {isOnline ? <WifiOff size={15} /> : <Wifi size={15} />}
+                {isOnline ? 'Simulate Offline Mode' : 'Reconnect Network'}
+              </button>
 
-            <button
-              type="button"
-              onClick={handleForceSync}
-              disabled={isFlushing || outbox.length === 0}
-              className="sg-btn sg-btn-primary"
-              style={{ flex: 1 }}
-            >
-              <RefreshCw size={15} className={isFlushing ? 'animate-spin' : ''} />
-              {isFlushing
-                ? 'Flushing Outbox...'
-                : outbox.length > 0
-                ? `Force Flush (${outbox.length})`
-                : 'Outbox Fully Synced'}
-            </button>
+              <button
+                type="button"
+                onClick={() => void handleForceSync()}
+                disabled={!isOnline || isFlushing || outbox.length === 0}
+                className="sg-btn sg-btn-primary"
+                style={{ flex: 1 }}
+              >
+                <RefreshCw size={15} className={isFlushing ? 'animate-spin' : ''} />
+                {isFlushing
+                  ? 'Flushing Outbox...'
+                  : !isOnline
+                  ? `Offline (${outbox.length} Queued)`
+                  : outbox.length > 0
+                  ? `Force Flush (${outbox.length})`
+                  : 'Outbox Fully Synced'}
+              </button>
 
-            <button
-              type="button"
-              onClick={handleResetDemo}
-              className="sg-btn sg-btn-secondary"
-              title="Reset job cards, inventory, and roster to baseline demo dataset"
-            >
-              <RotateCcw size={14} /> Reset Demo
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={handleResetDemo}
+                className="sg-btn sg-btn-secondary"
+                title="Reset job cards, inventory, and roster to baseline demo dataset"
+              >
+                <RotateCcw size={14} /> Reset Demo
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
       {/* SECTOR 2: Staff Credentials & Two-Way PIN Reset */}
-      <section>
-        <div className="sg-sector-header" style={{ flexWrap: 'wrap' }}>
-          <div>
-            <span className="sg-sector-title">
-              <Key size={14} color="var(--accent-primary)" /> Sector 2 &bull; Staff Credentials &amp; Accounts
-            </span>
-            <span className="sg-sector-subtitle tabular" style={{ marginLeft: '10px' }}>
-              {users.length} active on terminal
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              type="button"
-              onClick={() => {
-                setRegisterMode('REGISTER');
-                setIsRegisterModalOpen(true);
-              }}
-              className="sg-btn sg-btn-volt sg-btn-sm"
-            >
-              <UserPlus size={12} /> Register Staff
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setRegisterMode('LINK');
-                setIsRegisterModalOpen(true);
-              }}
-              className="sg-btn sg-btn-secondary sg-btn-sm"
-            >
-              <Link2 size={12} /> Link Cloud
-            </button>
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-strong)',
-            padding: '12px 14px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '10px',
-            marginBottom: '14px',
-          }}
-        >
-          <ShieldAlert size={16} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div>
-            <strong>Strict Privacy Protocol:</strong> User PINs are zero-knowledge encrypted and cannot be viewed or
-            overwritten by IT Administrators. You may dispatch a reset prompt <em>only</em> after the user submits a request.
-          </div>
-        </div>
-
-        {pendingRequests.length > 0 && (
-          <div
-            style={{
-              background: 'var(--accent-amber-tint)',
-              border: '2px solid var(--accent-amber)',
-              padding: '14px',
-              marginBottom: '14px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700, color: 'var(--accent-amber)' }}>
-                <AlertTriangle size={15} />
-                <span>Pending PIN Reset Requests ({pendingRequests.length})</span>
-              </div>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700 }}>ACTION REQUIRED</span>
+      {canManageUsers && (
+        <section>
+          <div className="sg-sector-header" style={{ flexWrap: 'wrap' }}>
+            <div>
+              <span className="sg-sector-title">
+                <Key size={14} color="var(--accent-primary)" /> Sector 2 &bull; Staff Credentials &amp; Accounts
+              </span>
+              <span className="sg-sector-subtitle tabular" style={{ marginLeft: '10px' }}>
+                {users.length} active on terminal
+              </span>
             </div>
 
-            {pendingRequests.map((req) => (
-              <div
-                key={req.id}
-                className="sg-panel"
-                style={{
-                  padding: '10px 12px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: '10px',
-                  flexWrap: 'wrap',
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegisterMode('REGISTER');
+                  setIsRegisterModalOpen(true);
                 }}
+                className="sg-btn sg-btn-volt sg-btn-sm"
               >
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 700 }}>{req.userName}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Role: {req.userRole} &bull; Requested{' '}
-                    {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleSendResetPrompt(req.id)}
-                  className="sg-btn sg-btn-primary sg-btn-sm"
-                >
-                  <Send size={12} /> Send Reset Prompt
-                </button>
-              </div>
-            ))}
+                <UserPlus size={12} /> Register Staff
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegisterMode('LINK');
+                  setIsRegisterModalOpen(true);
+                }}
+                className="sg-btn sg-btn-secondary sg-btn-sm"
+              >
+                <Link2 size={12} /> Link Cloud
+              </button>
+            </div>
           </div>
-        )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {users.map((u, idx) => {
-            const roleMeta = ROLE_METADATA[u.role];
-            const activeReq = authEngine.getActiveRequestForUser(u.id);
-            const isPending = activeReq?.status === 'PENDING';
-            const isPrompted = activeReq?.status === 'PROMPTED';
+          <div
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-strong)',
+              padding: '12px 14px',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+              marginBottom: '14px',
+            }}
+          >
+            <ShieldAlert size={16} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <strong>Strict Privacy Protocol:</strong> User PINs are zero-knowledge encrypted and cannot be viewed or
+              overwritten by IT Administrators. You may dispatch a reset code <em>only</em> after the user submits a request.
+            </div>
+          </div>
 
-            return (
-              <div
-                key={u.id}
-                className="sg-panel stagger-item"
-                style={{
-                  '--stagger-index': idx,
-                  padding: '14px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                  borderColor: isPending ? 'var(--accent-amber)' : 'var(--border-strong)',
-                } as React.CSSProperties}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <AvatarBadge src={u.avatarUrl} name={u.name} size={40} />
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 700 }}>{u.name}</div>
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
-                        {u.email}
-                      </div>
-                    </div>
-                  </div>
-
-                  <span
-                    className="sg-badge"
-                    style={{
-                      color: roleMeta.badgeColor,
-                      background: roleMeta.badgeBg,
-                      borderColor: roleMeta.borderColor,
-                    }}
-                  >
-                    {u.role}
-                  </span>
+          {pendingRequests.length > 0 && (
+            <div
+              style={{
+                background: 'var(--accent-amber-tint)',
+                border: '2px solid var(--accent-amber)',
+                padding: '14px',
+                marginBottom: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700, color: 'var(--accent-amber)' }}>
+                  <AlertTriangle size={15} />
+                  <span>Pending PIN Reset Requests ({pendingRequests.length})</span>
                 </div>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700 }}>ACTION REQUIRED</span>
+              </div>
 
+              {pendingRequests.map((req) => (
                 <div
-                  className="sg-panel-muted"
+                  key={req.id}
+                  className="sg-panel"
                   style={{
+                    padding: '10px 12px',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '8px 12px',
                     gap: '10px',
                     flexWrap: 'wrap',
                   }}
                 >
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Lock size={12} />
-                    <span>PIN Code:</span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', letterSpacing: '3px' }}>
-                      ••••
-                    </strong>
-                    <span style={{ fontSize: '10px' }}>(Protected)</span>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700 }}>{req.userName}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Role: {req.userRole} &bull; Requested{' '}
+                      {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </div>
 
-                  {isPending ? (
-                    <button
-                      type="button"
-                      onClick={() => activeReq && handleSendResetPrompt(activeReq.id)}
-                      className="sg-btn sg-btn-primary sg-btn-sm"
-                    >
-                      <Send size={11} /> Send Reset Prompt
-                    </button>
-                  ) : isPrompted ? (
-                    <span className="sg-badge sg-badge-ready">
-                      <Clock size={11} /> Prompt Dispatched
-                    </span>
-                  ) : (
-                    <span className="sg-badge sg-badge-intake" title="User must submit a PIN reset request first.">
-                      No Reset Request
-                    </span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleSendResetPrompt(req.id)}
+                    className="sg-btn sg-btn-primary sg-btn-sm"
+                  >
+                    <Send size={12} /> Send Reset Prompt
+                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {users.map((u, idx) => {
+              const roleMeta = ROLE_METADATA[u.role];
+              const activeReq = authEngine.getActiveRequestForUser(u.id);
+              const isPending = activeReq?.status === 'PENDING';
+              const isPrompted = activeReq?.status === 'PROMPTED';
+
+              return (
+                <div
+                  key={u.id}
+                  className="sg-panel stagger-item"
+                  style={{
+                    '--stagger-index': idx,
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    borderColor: isPending ? 'var(--accent-amber)' : 'var(--border-strong)',
+                  } as React.CSSProperties}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <AvatarBadge src={u.avatarUrl} name={u.name} size={40} />
+                      <div>
+                        <div style={{ fontSize: '14px', fontWeight: 700 }}>{u.name}</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {u.email}
+                        </div>
+                      </div>
+                    </div>
+
+                    <span
+                      className="sg-badge"
+                      style={{
+                        color: roleMeta.badgeColor,
+                        background: roleMeta.badgeBg,
+                        borderColor: roleMeta.borderColor,
+                      }}
+                    >
+                      {u.role}
+                    </span>
+                  </div>
+
+                  <div
+                    className="sg-panel-muted"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      gap: '10px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Lock size={12} />
+                      <span>PIN Code:</span>
+                      <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', letterSpacing: '3px' }}>
+                        ••••
+                      </strong>
+                      <span style={{ fontSize: '10px' }}>(Protected)</span>
+                    </div>
+
+                    {isPending ? (
+                      <button
+                        type="button"
+                        onClick={() => activeReq && handleSendResetPrompt(activeReq.id)}
+                        className="sg-btn sg-btn-primary sg-btn-sm"
+                      >
+                        <Send size={11} /> Send Reset Prompt
+                      </button>
+                    ) : isPrompted ? (
+                      <span className="sg-badge sg-badge-ready tabular">
+                        <Clock size={11} /> Prompt Dispatched
+                        {activeReq?.verificationCode ? ` (Code: ${activeReq.verificationCode})` : ''}
+                      </span>
+                    ) : (
+                      <span className="sg-badge sg-badge-intake" title="User must submit a PIN reset request first.">
+                        No Reset Request
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* SECTOR 3: System Security & Audit Trail */}
       <section>
@@ -392,11 +419,11 @@ export const SystemAdminView: React.FC = () => {
           <span className="sg-sector-title">
             <Activity size={14} color="var(--accent-amber)" /> Sector 3 &bull; System Security &amp; Audit Trail
           </span>
-          <span className="sg-sector-subtitle">Live events</span>
+          <span className="sg-sector-subtitle tabular">{auditLogs.length} live events</span>
         </div>
 
         <div className="sg-panel" style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {auditLogs.map((log) => (
+          {auditLogs.slice(0, 12).map((log) => (
             <div
               key={log.id}
               style={{
@@ -451,8 +478,7 @@ export const SystemAdminView: React.FC = () => {
         onClose={() => setIsRegisterModalOpen(false)}
         initialMode={registerMode}
         onSuccess={(newUser) => {
-          setStatusMessage(`Staff account ${newUser.name} successfully registered and synchronized!`);
-          setTimeout(() => setStatusMessage(null), 4000);
+          showStatus(`Staff account ${newUser.name} successfully registered and synchronized!`);
         }}
       />
     </div>

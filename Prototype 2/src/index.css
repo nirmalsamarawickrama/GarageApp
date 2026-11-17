@@ -701,28 +701,60 @@ option {
   }
 }
 
+.sg-dvi-layout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .sg-dvi-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .sg-dvi-layout > div:last-child {
+    width: 100%;
+  }
+}
+
 /* Print Stylesheet for Official A4 Tax Invoices */
 @media print {
   body {
     background: #FFFFFF !important;
     background-image: none !important;
   }
-  body * {
-    visibility: hidden !important;
+  .no-print,
+  [data-no-print="true"] {
+    display: none !important;
   }
-  #invoice-print-sheet,
-  #invoice-print-sheet * {
-    visibility: visible !important;
+  body:has(#invoice-print-sheet) *:not(:has(#invoice-print-sheet)):not(#invoice-print-sheet):not(#invoice-print-sheet *) {
+    display: none !important;
   }
-  #invoice-print-sheet {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 100%;
+  body:has(#invoice-print-sheet) #root > div,
+  body:has(#invoice-print-sheet) main,
+  .sg-modal-backdrop,
+  .sg-modal,
+  .sg-modal-body {
+    position: static !important;
+    display: block !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100% !important;
+    overflow: visible !important;
+    background: transparent !important;
     border: none !important;
     box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    animation: none !important;
+    transform: none !important;
   }
-  .no-print {
-    display: none !important;
+  #invoice-print-sheet {
+    position: static !important;
+    width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 }

@@ -43,8 +43,12 @@ export const VehicleInspectionModal: React.FC<VehicleInspectionModalProps> = ({
   const activeZoneObj = CAR_ZONES.find((z) => z.id === selectedZone) || CAR_ZONES[0];
 
   const handleAddPoint = () => {
+    const id =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `dmg-${crypto.randomUUID().slice(0, 8)}`
+        : `dmg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newPoint: VehicleDamagePoint = {
-      id: `dmg-${Date.now()}`,
+      id,
       part: selectedZone,
       type: damageType,
       severity,
@@ -91,7 +95,7 @@ export const VehicleInspectionModal: React.FC<VehicleInspectionModalProps> = ({
 
         <div className="sg-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* CAD Blueprint Canvas + Crosshair Telemetry */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '16px', alignItems: 'start' }}>
+          <div className="sg-dvi-layout">
             <div
               style={{
                 position: 'relative',

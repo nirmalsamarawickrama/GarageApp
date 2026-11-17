@@ -1,33 +1,37 @@
 import React, { useState } from 'react';
 import { Edit3, Search, Play, Square, Car } from 'lucide-react';
-import { Employee, JobCard } from '../../types';
+import { Employee, JobCard, User } from '../../types';
 import { DesktopEmployeeEditModal } from './DesktopEmployeeEditModal';
 import { syncEngine } from '../../state/syncEngine';
+import { WORKSHOP_BAYS } from '../../data/mockData';
 import { AvatarBadge } from '../shared/AvatarBadge';
 
 interface DesktopStaffViewProps {
   employees: Employee[];
   jobs: JobCard[];
   onToggleClock: (empId: string) => void;
+  currentUser?: User | null;
+  canManageRoster?: boolean;
+  canClockSelf?: boolean;
 }
 
-const BAYS = [
-  { id: 'bay-1', name: 'Bay 1 (2-Post Lift)', type: 'Hydraulic Lift' },
-  { id: 'bay-2', name: 'Bay 2 (Quick Lube Pit)', type: 'Subterranean Pit' },
-  { id: 'bay-3', name: 'Bay 3 (ECU Diagnostic Lab)', type: 'Computerized Lab' },
-  { id: 'bay-4', name: 'Bay 4 (Alignment Rack)', type: 'Laser Optical Rack' },
-  { id: 'bay-5', name: 'Bay 5 (Heavy Transmission)', type: '4-Post Lift' },
-  { id: 'bay-6', name: 'Bay 6 (Inspection & DVI)', type: 'Intake Bay' },
-];
+const FLOORPLAN_BAYS = WORKSHOP_BAYS.slice(0, 6);
 
 export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
   employees,
   jobs,
   onToggleClock,
+  currentUser = null,
+  canManageRoster = true,
+  canClockSelf = true,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | Employee['status']>('ALL');
-  const [selectedEmpForEdit, setSelectedEmpForEdit] = useState<Employee | null>(null);
+  const [selectedEmpIdForEdit, setSelectedEmpIdForEdit] = useState<string | null>(null);
+
+  const selectedEmpForEdit = selectedEmpIdForEdit
+    ? employees.find((e) => e.id === selectedEmpIdForEdit) || null
+    : null;
 
   const totalStaff = employees.length;
   const activeInBay = employees.filter((e) => e.status === 'Working on Job').length;
@@ -40,8 +44,9 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
 
   const filteredEmployees = employees.filter((e) => {
     const matchesStatus = statusFilter === 'ALL' || e.status === statusFilter;
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
     const matchesSearch =
+      query === '' ||
       e.name.toLowerCase().includes(query) ||
       e.role.toLowerCase().includes(query) ||
       (e.activeBay && e.activeBay.toLowerCase().includes(query)) ||
@@ -50,10 +55,12 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
   });
 
   const handleQuickStatusChange = (empId: string, newStatus: Employee['status']) => {
+    if (!canManageRoster) return;
     syncEngine.updateEmployee(empId, { status: newStatus });
   };
 
   const handleQuickBayChange = (empId: string, newBay: string) => {
+    if (!canManageRoster) return;
     syncEngine.updateEmployee(empId, {
       activeBay: newBay === 'Unassigned' ? undefined : newBay,
     });
@@ -119,26 +126,34 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
         </div>
 
         <div className="sg-bay-map">
-          {BAYS.map((bay, bayIdx) => {
-            const assignedTech = employees.find(
-              (e) => e.activeBay && e.activeBay.startsWith(bay.name.split(' ')[0] + ' ' + bay.name.split(' ')[1])
+          {FLOORPLAN_BAYS.map((bay, bayIdx) => {
+            const bayPrefix = bay.name.split('(')[0].trim();
+            const bayTechs = employees.filter(
+              (e) => e.activeBay && (e.activeBay === bay.name || e.activeBay.startsWith(bayPrefix))
             );
-            const activeJob = assignedTech?.currentJobCardId
-              ? jobs.find((j) => j.id === assignedTech.currentJobCardId)
+            const workingTech = bayTechs.find((e) => e.status === 'Working on Job');
+            const primaryTech = workingTech || bayTechs[0];
+            const isOccupied = !!workingTech;
+            const activeJob = primaryTech?.currentJobCardId
+              ? jobs.find((j) => j.id === primaryTech.currentJobCardId)
               : null;
 
             return (
               <div
                 key={bay.id}
-                className={assignedTech ? 'sg-panel' : 'sg-panel-muted'}
+                className={isOccupied ? 'sg-panel' : 'sg-panel-muted'}
                 style={{
                   padding: '14px',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
                   minHeight: '132px',
-                  borderColor: assignedTech ? 'var(--accent-primary)' : 'var(--border-subtle)',
-                  borderLeftWidth: assignedTech ? '4px' : '1px',
+                  borderColor: isOccupied
+                    ? 'var(--accent-primary)'
+                    : primaryTech
+                    ? 'var(--accent-amber)'
+                    : 'var(--border-subtle)',
+                  borderLeftWidth: primaryTech ? '4px' : '1px',
                 }}
               >
                 <div>
@@ -151,8 +166,8 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
                           fontSize: '10px',
                           fontWeight: 700,
                           padding: '2px 5px',
-                          background: assignedTech ? 'var(--accent-primary)' : 'var(--bg-elevated)',
-                          color: assignedTech ? 'var(--ink-on-accent)' : 'var(--text-muted)',
+                          background: isOccupied ? 'var(--accent-primary)' : 'var(--bg-elevated)',
+                          color: isOccupied ? 'var(--ink-on-accent)' : 'var(--text-muted)',
                           borderRadius: '2px',
                         }}
                       >
@@ -160,24 +175,33 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
                       </span>
                       <span style={{ fontSize: '13px', fontWeight: 700 }}>{bay.name.replace(/^Bay \d+\s*/, '')}</span>
                     </div>
-                    <span className={`sg-badge ${assignedTech ? 'sg-badge-ready' : 'sg-badge-intake'}`}>
-                      <span className={`sg-led ${assignedTech ? 'sg-led-live' : 'sg-led-warn'}`} />
-                      {assignedTech ? 'OCCUPIED' : 'VACANT'}
+                    <span
+                      className={`sg-badge ${
+                        isOccupied
+                          ? 'sg-badge-ready'
+                          : primaryTech
+                          ? 'sg-badge-diagnosis'
+                          : 'sg-badge-intake'
+                      }`}
+                    >
+                      <span className={`sg-led ${isOccupied ? 'sg-led-live' : 'sg-led-warn'}`} />
+                      {isOccupied ? 'OCCUPIED' : primaryTech ? 'STANDBY' : 'VACANT'}
                     </span>
                   </div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                     {bay.type}
+                    {bayTechs.length > 1 ? ` • ${bayTechs.length} techs assigned` : ''}
                   </div>
                 </div>
 
-                {assignedTech ? (
+                {primaryTech ? (
                   <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <AvatarBadge src={assignedTech.avatarUrl} name={assignedTech.name} size={28} />
+                      <AvatarBadge src={primaryTech.avatarUrl} name={primaryTech.name} size={28} />
                       <div>
-                        <div style={{ fontSize: '12px', fontWeight: 700 }}>{assignedTech.name}</div>
+                        <div style={{ fontSize: '12px', fontWeight: 700 }}>{primaryTech.name}</div>
                         <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--accent-primary)' }}>
-                          {assignedTech.role}
+                          {primaryTech.role} &bull; {primaryTech.status}
                         </div>
                       </div>
                     </div>
@@ -256,6 +280,11 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
           <tbody>
             {filteredEmployees.map((emp) => {
               const isWorking = emp.status === 'Working on Job';
+              const isSelf =
+                !!currentUser &&
+                (emp.userId === currentUser.id ||
+                  emp.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase());
+              const canClockThisEmp = canManageRoster || (canClockSelf && isSelf);
 
               return (
                 <tr key={emp.id}>
@@ -281,6 +310,7 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
                   <td>
                     <select
                       className="sg-select"
+                      disabled={!canManageRoster}
                       value={emp.status}
                       onChange={(e) =>
                         handleQuickStatusChange(emp.id, e.target.value as Employee['status'])
@@ -298,14 +328,15 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
                   <td>
                     <select
                       className="sg-select"
+                      disabled={!canManageRoster}
                       value={emp.activeBay || 'Unassigned'}
                       onChange={(e) => handleQuickBayChange(emp.id, e.target.value)}
-                      style={{ padding: '6px 10px', fontSize: '12px', maxWidth: '200px' }}
+                      style={{ padding: '6px 10px', fontSize: '12px', maxWidth: '210px' }}
                       aria-label={`Bay assignment for ${emp.name}`}
                     >
                       <option value="Unassigned">Unassigned / Floating</option>
-                      {BAYS.map((b) => (
-                        <option key={b.name} value={b.name}>
+                      {WORKSHOP_BAYS.map((b) => (
+                        <option key={b.id} value={b.name}>
                           {b.name}
                         </option>
                       ))}
@@ -324,22 +355,30 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
 
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                      <button
-                        type="button"
-                        onClick={() => onToggleClock(emp.id)}
-                        className={`sg-btn sg-btn-sm ${isWorking ? 'sg-btn-danger' : 'sg-btn-primary'}`}
-                      >
-                        {isWorking ? <Square size={12} /> : <Play size={12} />}
-                        <span>{isWorking ? 'End Job' : 'Clock Job'}</span>
-                      </button>
+                      {canClockThisEmp && (
+                        <button
+                          type="button"
+                          onClick={() => onToggleClock(emp.id)}
+                          className={`sg-btn sg-btn-sm ${isWorking ? 'sg-btn-danger' : 'sg-btn-primary'}`}
+                        >
+                          {isWorking ? <Square size={12} /> : <Play size={12} />}
+                          <span>{isWorking ? 'End Job' : 'Clock Job'}</span>
+                        </button>
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEmpForEdit(emp)}
-                        className="sg-btn sg-btn-secondary sg-btn-sm"
-                      >
-                        <Edit3 size={12} /> Edit
-                      </button>
+                      {canManageRoster && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedEmpIdForEdit(emp.id)}
+                          className="sg-btn sg-btn-secondary sg-btn-sm"
+                        >
+                          <Edit3 size={12} /> Edit
+                        </button>
+                      )}
+
+                      {!canClockThisEmp && !canManageRoster && (
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>View only</span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -352,7 +391,7 @@ export const DesktopStaffView: React.FC<DesktopStaffViewProps> = ({
       {selectedEmpForEdit && (
         <DesktopEmployeeEditModal
           isOpen={!!selectedEmpForEdit}
-          onClose={() => setSelectedEmpForEdit(null)}
+          onClose={() => setSelectedEmpIdForEdit(null)}
           employee={selectedEmpForEdit}
           jobs={jobs}
         />

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Wrench, CheckCircle } from 'lucide-react';
 import { Employee, JobCard } from '../../types';
+import { WORKSHOP_BAYS } from '../../data/mockData';
 
 interface NewJobCardModalProps {
   isOpen: boolean;
@@ -12,8 +13,30 @@ interface NewJobCardModalProps {
   ) => void;
 }
 
+function generateFallbackVin(): string {
+  return `1HGCR2F8${Math.floor(100000000 + Math.random() * 900000000)}`;
+}
+
 export const NewJobCardModal: React.FC<NewJobCardModalProps> = ({
   isOpen,
+  onClose,
+  employees,
+  activeBranchId,
+  onCreateJob,
+}) => {
+  if (!isOpen) return null;
+  return (
+    <NewJobCardModalContent
+      key={activeBranchId}
+      onClose={onClose}
+      employees={employees}
+      activeBranchId={activeBranchId}
+      onCreateJob={onCreateJob}
+    />
+  );
+};
+
+const NewJobCardModalContent: React.FC<Omit<NewJobCardModalProps, 'isOpen'>> = ({
   onClose,
   employees,
   activeBranchId,
@@ -26,48 +49,43 @@ export const NewJobCardModal: React.FC<NewJobCardModalProps> = ({
   const [vin, setVin] = useState('');
   const [primaryComplaint, setPrimaryComplaint] = useState('');
   const [assignedTechId, setAssignedTechId] = useState('');
-  const [assignedBay, setAssignedBay] = useState('Bay 1 (2-Post Lift)');
+  const [assignedBay, setAssignedBay] = useState<string>(WORKSHOP_BAYS[0].name);
   const [estimatedLaborCost, setEstimatedLaborCost] = useState(150);
 
-  if (!isOpen) return null;
+  const branchEmployees = employees.filter((emp) => emp.branchId === activeBranchId);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim() || !vehicleModel.trim() || !vehiclePlate.trim()) return;
 
-    const assignedTech = employees.find((emp) => emp.id === assignedTechId);
+    const assignedTech = branchEmployees.find((emp) => emp.id === assignedTechId);
+    const labor = Math.max(0, Number(estimatedLaborCost) || 0);
+    const taxAmount = Math.round(labor * 0.08 * 100) / 100;
+    const totalCost = Math.round((labor + taxAmount) * 100) / 100;
 
     onCreateJob({
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim() || '+1 (555) 000-0000',
       vehicleModel: vehicleModel.trim(),
       vehiclePlate: vehiclePlate.trim().toUpperCase(),
-      vin: vin.trim() || `1HGCR2F8${Math.floor(100000000 + Math.random() * 900000000)}`,
+      vin: vin.trim() || generateFallbackVin(),
       status: 'INTAKE',
       primaryComplaint:
         primaryComplaint.trim() || 'General multi-point inspection & diagnostic review.',
       assignedTechId: assignedTech?.id,
       assignedTechName: assignedTech?.name,
       assignedBay,
-      estimatedLaborCost: Number(estimatedLaborCost) || 0,
+      estimatedLaborCost: labor,
       partsCost: 0,
-      totalCost: Number(estimatedLaborCost) || 0,
+      totalCost,
       branchId: activeBranchId,
       damagePoints: [],
       allocatedParts: [],
       billingStatus: 'PENDING',
-      taxAmount: Math.round((Number(estimatedLaborCost) || 0) * 0.08 * 100) / 100,
+      taxAmount,
       discountAmount: 0,
     });
 
-    setCustomerName('');
-    setCustomerPhone('');
-    setVehicleModel('');
-    setVehiclePlate('');
-    setVin('');
-    setPrimaryComplaint('');
-    setAssignedTechId('');
-    setEstimatedLaborCost(150);
     onClose();
   };
 
@@ -191,7 +209,7 @@ export const NewJobCardModal: React.FC<NewJobCardModalProps> = ({
                 onChange={(e) => setAssignedTechId(e.target.value)}
               >
                 <option value="">-- Auto-dispatch later --</option>
-                {employees.map((emp) => (
+                {branchEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
                     {emp.name} ({emp.role})
                   </option>
@@ -205,12 +223,11 @@ export const NewJobCardModal: React.FC<NewJobCardModalProps> = ({
                 value={assignedBay}
                 onChange={(e) => setAssignedBay(e.target.value)}
               >
-                <option value="Bay 1 (2-Post Lift)">Bay 1 (2-Post Lift)</option>
-                <option value="Bay 2 (Quick Lube Pit)">Bay 2 (Quick Lube Pit)</option>
-                <option value="Bay 3 (ECU Diagnostic Lab)">Bay 3 (ECU Diagnostic Lab)</option>
-                <option value="Bay 4 (Alignment Rack)">Bay 4 (Alignment Rack)</option>
-                <option value="Bay 5 (Heavy Transmission Lift)">Bay 5 (Heavy Transmission Lift)</option>
-                <option value="Bay 6 (Inspection & DVI Pit)">Bay 6 (Inspection &amp; DVI Pit)</option>
+                {WORKSHOP_BAYS.map((bay) => (
+                  <option key={bay.id} value={bay.name}>
+                    {bay.name}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -223,7 +240,7 @@ export const NewJobCardModal: React.FC<NewJobCardModalProps> = ({
               step="10"
               className="sg-input sg-input-mono"
               value={estimatedLaborCost}
-              onChange={(e) => setEstimatedLaborCost(Number(e.target.value))}
+              onChange={(e) => setEstimatedLaborCost(Math.max(0, Number(e.target.value) || 0))}
             />
           </div>
 

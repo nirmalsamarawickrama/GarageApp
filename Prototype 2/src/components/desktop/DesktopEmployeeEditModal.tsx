@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Clock, Wrench, CheckCircle2, Briefcase } from 'lucide-react';
 import { Employee, JobCard } from '../../types';
 import { syncEngine } from '../../state/syncEngine';
+import { WORKSHOP_BAYS } from '../../data/mockData';
 import { AvatarBadge } from '../shared/AvatarBadge';
 
 interface DesktopEmployeeEditModalProps {
@@ -12,16 +13,7 @@ interface DesktopEmployeeEditModalProps {
   onSaved?: () => void;
 }
 
-const BAY_OPTIONS = [
-  'Bay 1 (2-Post Lift)',
-  'Bay 2 (Quick Lube Pit)',
-  'Bay 3 (ECU Diagnostic Lab)',
-  'Bay 4 (Alignment Rack)',
-  'Bay 5 (Heavy Transmission Lift)',
-  'Bay 6 (Inspection & DVI Pit)',
-  'Paint & Detailing Booth',
-  'Unassigned / Roaming',
-];
+const BAY_OPTIONS = [...WORKSHOP_BAYS.map((b) => b.name), 'Unassigned / Roaming'];
 
 const ROLE_OPTIONS: Employee['role'][] = [
   'Master Technician',
@@ -43,12 +35,14 @@ const DesktopEmployeeEditModalContent: React.FC<
   const [role, setRole] = useState<Employee['role']>(employee.role);
   const [phone, setPhone] = useState(employee.phone);
   const [status, setStatus] = useState<Employee['status']>(employee.status);
-  const [activeBay, setActiveBay] = useState(employee.activeBay || BAY_OPTIONS[0]);
+  const [activeBay, setActiveBay] = useState(employee.activeBay || 'Unassigned / Roaming');
   const [currentJobCardId, setCurrentJobCardId] = useState(employee.currentJobCardId || '');
   const [actualHours, setActualHours] = useState(employee.actualHoursThisMonth);
   const [billedHours, setBilledHours] = useState(employee.billedHoursThisMonth);
 
-  const efficiency = actualHours > 0 ? Math.round((billedHours / actualHours) * 100) : 100;
+  const branchJobs = jobs.filter((j) => j.branchId === employee.branchId);
+  const efficiency =
+    actualHours > 0 ? Math.round((billedHours / actualHours) * 100) : billedHours > 0 ? 100 : 0;
 
   const handleSave = () => {
     syncEngine.updateEmployee(employee.id, {
@@ -158,7 +152,7 @@ const DesktopEmployeeEditModalContent: React.FC<
                   onChange={(e) => setCurrentJobCardId(e.target.value)}
                 >
                   <option value="">-- No Active Job Assigned --</option>
-                  {jobs.map((j) => (
+                  {branchJobs.map((j) => (
                     <option key={j.id} value={j.id}>
                       {j.jobNumber} &bull; {j.vehicleModel} ({j.status})
                     </option>
