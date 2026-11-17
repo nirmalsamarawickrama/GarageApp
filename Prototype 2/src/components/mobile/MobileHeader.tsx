@@ -24,6 +24,9 @@ interface MobileHeaderProps {
   onOpenProfile?: () => void;
   onOpenWifiSync?: () => void;
   onSwitchToDesktop?: () => void;
+  canSwitchBranches?: boolean;
+  canViewOutbox?: boolean;
+  canForceSync?: boolean;
 }
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({
@@ -38,6 +41,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   onOpenProfile,
   onOpenWifiSync,
   onSwitchToDesktop,
+  canSwitchBranches = true,
+  canViewOutbox = true,
+  canForceSync = true,
 }) => {
   const roleMeta = currentUser ? ROLE_METADATA[currentUser.role] : null;
 
@@ -90,41 +96,59 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 
         {/* Status Badges & Profile */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button
-            type="button"
-            onClick={onOpenOutbox}
-            title="View local offline mutation queue"
-            className="sg-btn sg-btn-sm tabular"
-            style={{
-              minHeight: '30px',
-              padding: '3px 8px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11px',
-              background: outboxCount > 0 ? 'var(--accent-amber-tint)' : 'var(--bg-elevated)',
-              color: outboxCount > 0 ? 'var(--accent-amber)' : 'var(--text-primary)',
-              borderColor: outboxCount > 0 ? 'var(--accent-amber)' : 'var(--border-strong)',
-            }}
-          >
-            <CloudUpload size={13} />
-            <span>{outboxCount}</span>
-          </button>
+          {canViewOutbox && (
+            <button
+              type="button"
+              onClick={onOpenOutbox}
+              title="View local offline mutation queue"
+              className="sg-btn sg-btn-sm tabular"
+              style={{
+                minHeight: '30px',
+                padding: '3px 8px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '11px',
+                background: outboxCount > 0 ? 'var(--accent-amber-tint)' : 'var(--bg-elevated)',
+                color: outboxCount > 0 ? 'var(--accent-amber)' : 'var(--text-primary)',
+                borderColor: outboxCount > 0 ? 'var(--accent-amber)' : 'var(--border-strong)',
+              }}
+            >
+              <CloudUpload size={13} />
+              <span>{outboxCount}</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={onToggleNetwork}
-            title="Toggle Online / Offline Room DB mode"
-            className="sg-btn sg-btn-sm"
-            style={{
-              minHeight: '30px',
-              padding: '3px 8px',
-              background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
-              color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
-              borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
-            }}
-            aria-label={isOnline ? 'Online Mode' : 'Offline Mode'}
-          >
-            {isOnline ? <Wifi size={13} /> : <WifiOff size={13} />}
-          </button>
+          {canForceSync ? (
+            <button
+              type="button"
+              onClick={onToggleNetwork}
+              title="Toggle Online / Offline Room DB mode"
+              className="sg-btn sg-btn-sm"
+              style={{
+                minHeight: '30px',
+                padding: '3px 8px',
+                background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
+                color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+              }}
+              aria-label={isOnline ? 'Online Mode' : 'Offline Mode'}
+            >
+              {isOnline ? <Wifi size={13} /> : <WifiOff size={13} />}
+            </button>
+          ) : (
+            <span
+              className="sg-badge"
+              title={isOnline ? 'Online' : 'Offline Buffer'}
+              style={{
+                minHeight: '30px',
+                padding: '3px 8px',
+                background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
+                color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+              }}
+            >
+              {isOnline ? <Wifi size={13} /> : <WifiOff size={13} />}
+            </span>
+          )}
 
           <button
             type="button"
@@ -182,6 +206,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         <select
           className="sg-select"
           value={activeBranchId}
+          disabled={!canSwitchBranches}
           onChange={(e) => onSelectBranch(e.target.value)}
           style={{
             paddingLeft: '32px',
@@ -191,8 +216,11 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
             background: 'var(--bg-elevated)',
             appearance: 'none',
             WebkitAppearance: 'none',
+            opacity: canSwitchBranches ? 1 : 0.78,
+            cursor: canSwitchBranches ? 'pointer' : 'not-allowed',
           }}
           aria-label="Select workshop branch"
+          title={canSwitchBranches ? 'Switch operating branch' : 'Assigned branch locked for your role'}
         >
           {branches.map((b) => (
             <option key={b.id} value={b.id}>

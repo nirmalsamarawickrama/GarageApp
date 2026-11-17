@@ -7,6 +7,8 @@ import { syncEngine } from '../../state/syncEngine';
 interface DesktopBillingViewProps {
   jobs: JobCard[];
   onOpenNewJob?: () => void;
+  canManageInvoices?: boolean;
+  canCreateIntake?: boolean;
 }
 
 const STATUS_FILTERS = ['ALL', 'PENDING', 'INVOICED', 'PARTIAL', 'PAID'] as const;
@@ -14,28 +16,36 @@ const STATUS_FILTERS = ['ALL', 'PENDING', 'INVOICED', 'PARTIAL', 'PAID'] as cons
 export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
   jobs,
   onOpenNewJob,
+  canManageInvoices = true,
+  canCreateIntake = true,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('ALL');
-  const [selectedJobForEdit, setSelectedJobForEdit] = useState<JobCard | null>(null);
+  const [selectedJobIdForEdit, setSelectedJobIdForEdit] = useState<string | null>(null);
 
-  const totalInvoiced = jobs.reduce((sum, j) => sum + (j.totalCost || 0), 0);
-  const totalCollected = jobs.reduce(
-    (sum, j) => sum + (j.paidAmount || (j.billingStatus === 'PAID' ? j.totalCost : 0)),
-    0
-  );
-  const outstandingBalance = Math.max(0, totalInvoiced - totalCollected);
+  const selectedJobForEdit = selectedJobIdForEdit
+    ? jobs.find((j) => j.id === selectedJobIdForEdit) || null
+    : null;
+
+  const totalInvoiced = jobs.reduce((sum, j) => sum + (j.totalCost ?? 0), 0);
+  const totalCollected = jobs.reduce((sum, j) => {
+    const effectiveTotal = j.totalCost ?? 0;
+    const paid = j.billingStatus === 'PAID' ? (j.paidAmount ?? effectiveTotal) : (j.paidAmount ?? 0);
+    return sum + Math.min(effectiveTotal, paid);
+  }, 0);
+  const outstandingBalance = Math.max(0, Math.round((totalInvoiced - totalCollected) * 100) / 100);
   const overdueCount = jobs.filter(
     (j) =>
-      (j.billingStatus === 'PENDING' || j.billingStatus === 'INVOICED') &&
+      (j.billingStatus === 'PENDING' || j.billingStatus === 'INVOICED' || j.billingStatus === 'PARTIAL') &&
       j.status === 'READY_DELIVERY'
   ).length;
 
   const filteredJobs = jobs.filter((j) => {
     const billStatus = j.billingStatus || 'PENDING';
     const matchesStatus = statusFilter === 'ALL' || billStatus === statusFilter;
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
     const matchesSearch =
+      query === '' ||
       j.jobNumber.toLowerCase().includes(query) ||
       (j.invoiceNumber && j.invoiceNumber.toLowerCase().includes(query)) ||
       j.customerName.toLowerCase().includes(query) ||
@@ -59,9 +69,19 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
   };
 
   const handleQuickMarkPaid = (job: JobCard) => {
+    if (!canManageInvoices) return;
+    const labor = job.estimatedLaborCost ?? 0;
+    const parts = job.partsCost ?? 0;
+    const discount = job.discountAmount ?? 0;
+    const subtotal = Math.max(0, labor + parts - discount);
+    const tax = job.taxAmount ?? Math.round(subtotal * 0.08 * 100) / 100;
+    const grandTotal = Math.round((subtotal + tax) * 100) / 100;
+
     syncEngine.updateJobCardBilling(job.id, {
       billingStatus: 'PAID',
-      paidAmount: job.totalCost,
+      taxAmount: tax,
+      totalCost: grandTotal,
+      paidAmount: grandTotal,
       paymentMethod: job.paymentMethod || 'Card',
     });
   };
@@ -172,7 +192,7 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
           ))}
         </div>
 
-        {onOpenNewJob && (
+        {onOpenNewJob && canCreateIntake && (
           <button type="button" onClick={onOpenNewJob} className="sg-btn sg-btn-volt">
             <Plus size={15} /> New Work Order
           </button>
@@ -205,12 +225,18 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
             ) : (
               filteredJobs.map((job) => {
                 const badge = getStatusBadge(job.billingStatus);
-                const effectiveLabor = job.estimatedLaborCost || 0;
-                const effectiveParts = job.partsCost || 0;
-                const effectiveTax = job.taxAmount || Math.round((job.totalCost || 0) * 0.08 * 100) / 100;
-                const effectiveTotal = job.totalCost || 0;
-                const paid = job.paidAmount || (job.billingStatus === 'PAID' ? effectiveTotal : 0);
-                const isFullyPaid = job.billingStatus === 'PAID' || paid >= effectiveTotal;
+                const effectiveLabor = job.estimatedLaborCost ?? 0;
+                const effectiveParts = job.partsCost ?? 0;
+                const effectiveDiscount = job.discountAmount ?? 0;
+                const subtotal = Math.max(0, effectiveLabor + effectiveParts - effectiveDiscount);
+                const effectiveTax = job.taxAmount ?? Math.round(subtotal * 0.08 * 100) / 100;
+                const effectiveTotal = job.totalCost ?? Math.round((subtotal + effectiveTax) * 100) / 100;
+                const paid =
+                  job.billingStatus === 'PAID'
+                    ? (job.paidAmount ?? effectiveTotal)
+                    : (job.paidAmount ?? 0);
+                const isFullyPaid =
+                  job.billingStatus === 'PAID' || (effectiveTotal > 0 && paid >= effectiveTotal);
 
                 return (
                   <tr key={job.id}>
@@ -245,6 +271,11 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
                     </td>
                     <td className="tabular" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--accent-amber)' }}>
                       ${effectiveParts.toFixed(2)}
+                      {effectiveDiscount > 0 && (
+                        <div style={{ fontSize: '10px', color: 'var(--accent-secondary)' }}>
+                          -${effectiveDiscount.toFixed(2)} disc.
+                        </div>
+                      )}
                     </td>
                     <td className="tabular" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
                       ${effectiveTax.toFixed(2)}
@@ -263,27 +294,31 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
                     </td>
 
                     <td style={{ textAlign: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedJobForEdit(job)}
-                          className="sg-btn sg-btn-secondary sg-btn-sm"
-                          title="Edit bill & labor rates"
-                        >
-                          <Edit3 size={12} /> Edit Bill
-                        </button>
-
-                        {!isFullyPaid && (
+                      {canManageInvoices ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                           <button
                             type="button"
-                            onClick={() => handleQuickMarkPaid(job)}
-                            className="sg-btn sg-btn-emerald sg-btn-sm"
-                            title="Mark full payment settled"
+                            onClick={() => setSelectedJobIdForEdit(job.id)}
+                            className="sg-btn sg-btn-secondary sg-btn-sm"
+                            title="Edit bill & labor rates"
                           >
-                            <CheckCircle2 size={12} /> Settle
+                            <Edit3 size={12} /> Edit Bill
                           </button>
-                        )}
-                      </div>
+
+                          {!isFullyPaid && (
+                            <button
+                              type="button"
+                              onClick={() => handleQuickMarkPaid(job)}
+                              className="sg-btn sg-btn-emerald sg-btn-sm"
+                              title="Mark full payment settled"
+                            >
+                              <CheckCircle2 size={12} /> Settle
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>View only</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -296,7 +331,7 @@ export const DesktopBillingView: React.FC<DesktopBillingViewProps> = ({
       {selectedJobForEdit && (
         <DesktopBillEditModal
           isOpen={!!selectedJobForEdit}
-          onClose={() => setSelectedJobForEdit(null)}
+          onClose={() => setSelectedJobIdForEdit(null)}
           job={selectedJobForEdit}
         />
       )}

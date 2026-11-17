@@ -17,6 +17,9 @@ interface WorkProgressViewProps {
   onAdvanceStatus: (jobId: string, nextStatus: JobStatus) => void;
   onOpenNewJob: () => void;
   onOpenInspection: (job: JobCard) => void;
+  canCreateIntake?: boolean;
+  canAdvanceStatus?: boolean;
+  canPerformDvi?: boolean;
 }
 
 const STAGE_ORDER: JobStatus[] = [
@@ -43,6 +46,9 @@ export const WorkProgressView: React.FC<WorkProgressViewProps> = ({
   onAdvanceStatus,
   onOpenNewJob,
   onOpenInspection,
+  canCreateIntake = true,
+  canAdvanceStatus = true,
+  canPerformDvi = true,
 }) => {
   const [activePipelineSector, setActivePipelineSector] = useState<'ACTIVE' | 'READY' | 'ALL'>('ACTIVE');
   const [searchQuery, setSearchQuery] = useState('');
@@ -58,12 +64,13 @@ export const WorkProgressView: React.FC<WorkProgressViewProps> = ({
         ? j.status === 'READY_DELIVERY'
         : j.status !== 'READY_DELIVERY';
 
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
       q === '' ||
       j.customerName.toLowerCase().includes(q) ||
       j.vehicleModel.toLowerCase().includes(q) ||
       j.vehiclePlate.toLowerCase().includes(q) ||
+      j.vin.toLowerCase().includes(q) ||
       j.jobNumber.toLowerCase().includes(q);
 
     return matchesSector && matchesSearch;
@@ -112,14 +119,16 @@ export const WorkProgressView: React.FC<WorkProgressViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenNewJob}
-            className="sg-btn sg-btn-primary sg-btn-lg"
-            style={{ width: '100%' }}
-          >
-            <Plus size={18} /> Intake New Vehicle
-          </button>
+          {canCreateIntake && (
+            <button
+              type="button"
+              onClick={onOpenNewJob}
+              className="sg-btn sg-btn-primary sg-btn-lg"
+              style={{ width: '100%' }}
+            >
+              <Plus size={18} /> Intake New Vehicle
+            </button>
+          )}
         </div>
       </section>
 
@@ -291,14 +300,20 @@ export const WorkProgressView: React.FC<WorkProgressViewProps> = ({
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenInspection(job)}
-                      className={`sg-btn sg-btn-sm ${hasDamageReport ? 'sg-btn-volt' : 'sg-btn-secondary'}`}
-                    >
-                      <AlertCircle size={14} />
-                      {hasDamageReport ? `DVI Report (${job.damagePoints!.length} logged)` : 'Perform DVI'}
-                    </button>
+                    {canPerformDvi ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenInspection(job)}
+                        className={`sg-btn sg-btn-sm ${hasDamageReport ? 'sg-btn-volt' : 'sg-btn-secondary'}`}
+                      >
+                        <AlertCircle size={14} />
+                        {hasDamageReport ? `DVI Report (${job.damagePoints!.length} logged)` : 'Perform DVI'}
+                      </button>
+                    ) : (
+                      <span className="sg-badge sg-badge-intake">
+                        DVI: {job.damagePoints?.length || 0} logged
+                      </span>
+                    )}
 
                     <div style={{ textAlign: 'right' }}>
                       <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginRight: '6px' }}>Estimated Total:</span>
@@ -311,7 +326,7 @@ export const WorkProgressView: React.FC<WorkProgressViewProps> = ({
                     </div>
                   </div>
 
-                  {nextStatus && (
+                  {nextStatus && canAdvanceStatus && (
                     <button
                       type="button"
                       onClick={() => onAdvanceStatus(job.id, nextStatus)}

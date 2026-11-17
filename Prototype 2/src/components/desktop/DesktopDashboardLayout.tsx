@@ -23,8 +23,9 @@ import {
   User,
   JobStatus,
   SyncMutation,
+  Permission,
 } from '../../types';
-import { ROLE_METADATA } from '../../auth/permissions';
+import { ROLE_METADATA, hasPermission, hasAnyPermission } from '../../auth/permissions';
 import { DesktopAnalyticsView } from './DesktopAnalyticsView';
 import { DesktopKanbanView } from './DesktopKanbanView';
 import { DesktopBillingView } from './DesktopBillingView';
@@ -55,6 +56,7 @@ interface DesktopDashboardLayoutProps {
   activeBranchId: string;
   onSelectBranch: (id: string) => void;
   jobs: JobCard[];
+  allJobs?: JobCard[];
   employees: Employee[];
   inventory: InventoryItem[];
   outbox: SyncMutation[];
@@ -63,7 +65,7 @@ interface DesktopDashboardLayoutProps {
   onAdvanceJobStatus: (jobId: string, nextStatus: JobStatus) => void;
   onCreateJob: (jobData: Omit<JobCard, 'id' | 'jobNumber' | 'createdAt' | 'updatedAt' | 'version'>) => void;
   onUpdateStock: (itemId: string, delta: number) => void;
-  onTransferStock: (itemId: string, targetBranchId: string, qty: number) => void;
+  onTransferStock: (itemId: string, targetBranchId: string, qty: number) => boolean;
   onToggleClock: (empId: string) => void;
   onSwitchToBayTerminal?: () => void;
 }
@@ -74,6 +76,7 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
   activeBranchId,
   onSelectBranch,
   jobs,
+  allJobs,
   employees,
   inventory,
   outbox,
@@ -92,16 +95,34 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isOutboxOpen, setIsOutboxOpen] = useState(false);
-  const [selectedJobForInspection, setSelectedJobForInspection] = useState<JobCard | null>(null);
+  const [inspectionJobId, setInspectionJobId] = useState<string | null>(null);
+
+  const selectedJobForInspection = inspectionJobId
+    ? jobs.find((j) => j.id === inspectionJobId) || null
+    : null;
 
   const activeBranch = branches.find((b) => b.id === activeBranchId) || branches[0];
   const roleMeta = ROLE_METADATA[currentUser.role];
   const relayInfo = syncEngine.getWifiRelayInfo();
 
+  // RBAC capabilities
+  const canSwitchBranches = hasPermission(currentUser, 'system:switch_all_branches');
+  const canViewOutbox = hasPermission(currentUser, 'system:view_outbox');
+  const canForceSync = hasPermission(currentUser, 'system:force_sync');
+  const canCreateIntake = hasPermission(currentUser, 'job:create_intake');
+  const canAdvanceStatus = hasPermission(currentUser, 'job:advance_status');
+  const canPerformDvi = hasPermission(currentUser, 'job:perform_dvi');
+  const canManageInvoices = hasPermission(currentUser, 'finance:manage_invoices');
+  const canManageRoster = hasPermission(currentUser, 'employee:manage_roster');
+  const canClockSelf = hasPermission(currentUser, 'employee:clock_self');
+  const canAdjustStock = hasPermission(currentUser, 'inventory:adjust_stock');
+  const canTransferStock = hasPermission(currentUser, 'inventory:transfer_branch');
+  const canScanBarcode = hasPermission(currentUser, 'inventory:scan_barcode');
+
   const handleSaveInspection = (points: Parameters<typeof syncEngine.saveInspectionPoints>[1]) => {
-    if (selectedJobForInspection) {
+    if (selectedJobForInspection && canPerformDvi) {
       syncEngine.saveInspectionPoints(selectedJobForInspection.id, points);
-      setSelectedJobForInspection(null);
+      setInspectionJobId(null);
     }
   };
 
@@ -109,42 +130,68 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
     item: InventoryItem,
     action: 'INSPECT' | 'DEDUCT' | 'RESTOCK'
   ) => {
-    if (action === 'DEDUCT') {
+    if (action === 'DEDUCT' && (canAdjustStock || canScanBarcode)) {
       syncEngine.updateInventoryStock(item.id, -1);
-    } else if (action === 'RESTOCK') {
+    } else if (action === 'RESTOCK' && canAdjustStock) {
       syncEngine.updateInventoryStock(item.id, 5);
     }
   };
 
-  const navItems: {
+  const allNavItems: {
     id: DesktopNavTab;
     label: string;
     icon: React.ComponentType<{ size?: number; color?: string }>;
+    requiredPermissions: Permission[];
     badge?: number;
   }[] = [
-    { id: 'overview', label: 'Executive Analytics', icon: LayoutDashboard },
-    { id: 'kanban', label: 'Repair Pipeline (Kanban)', icon: Kanban, badge: jobs.length },
-    { id: 'billing', label: 'Bills & Invoicing', icon: Receipt },
+    {
+      id: 'overview',
+      label: 'Executive Analytics',
+      icon: LayoutDashboard,
+      requiredPermissions: ['finance:view_kpis'],
+    },
+    {
+      id: 'kanban',
+      label: 'Repair Pipeline (Kanban)',
+      icon: Kanban,
+      requiredPermissions: ['job:view'],
+      badge: jobs.length,
+    },
+    {
+      id: 'billing',
+      label: 'Bills & Invoicing',
+      icon: Receipt,
+      requiredPermissions: ['finance:manage_invoices', 'finance:view_kpis'],
+    },
     {
       id: 'staff',
       label: 'Staff & Bay Operations',
       icon: Users,
+      requiredPermissions: ['employee:view', 'employee:view_rates'],
       badge: employees.filter((e) => e.status === 'Working on Job').length,
     },
     {
       id: 'inventory',
       label: 'Parts & Warehouse',
       icon: Package,
-      badge:
-        inventory.filter((i) => i.stockQty <= i.minSafetyStock).length || undefined,
+      requiredPermissions: ['inventory:view'],
+      badge: inventory.filter((i) => i.stockQty <= i.minSafetyStock).length || undefined,
     },
     {
       id: 'system',
       label: 'IT Security & Sync Relay',
       icon: ShieldCheck,
+      requiredPermissions: ['system:view_outbox', 'system:manage_users'],
       badge: outbox.length || undefined,
     },
   ];
+
+  const navItems = allNavItems.filter((item) =>
+    hasAnyPermission(currentUser, item.requiredPermissions)
+  );
+  const currentTab: DesktopNavTab = navItems.some((item) => item.id === activeTab)
+    ? activeTab
+    : navItems[0]?.id ?? 'kanban';
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', width: '100%', overflowX: 'hidden' }}>
@@ -224,18 +271,23 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
 
           {/* Operating Hub Selector */}
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
-            <label className="sg-label">Operating Hub</label>
+            <label className="sg-label">
+              Operating Hub {!canSwitchBranches && '(Locked)'}
+            </label>
             <div style={{ position: 'relative' }}>
               <select
                 className="sg-select"
                 value={activeBranchId}
-                onChange={(e) => onSelectBranch(e.target.value)}
+                disabled={!canSwitchBranches}
+                onChange={(e) => canSwitchBranches && onSelectBranch(e.target.value)}
                 style={{
                   paddingRight: '28px',
                   fontSize: '12px',
                   fontWeight: 700,
                   appearance: 'none',
                   WebkitAppearance: 'none',
+                  opacity: canSwitchBranches ? 1 : 0.78,
+                  cursor: canSwitchBranches ? 'pointer' : 'not-allowed',
                 }}
                 aria-label="Select operating garage hub"
               >
@@ -257,7 +309,7 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
           <nav aria-label="Primary Desktop Navigation" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive = currentTab === item.id;
 
               return (
                 <button
@@ -399,35 +451,51 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
             </span>
             <span style={{ color: 'var(--text-muted)' }}>/</span>
             <span style={{ fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 700 }}>
-              {navItems.find((n) => n.id === activeTab)?.label}
+              {navItems.find((n) => n.id === currentTab)?.label}
             </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => setIsOutboxOpen(true)}
-              className="sg-btn sg-btn-secondary sg-btn-sm tabular"
-              title="Open Offline Outbox Queue"
-            >
-              <CloudUpload size={14} color={outbox.length > 0 ? 'var(--accent-amber)' : 'var(--text-primary)'} />
-              <span>Outbox ({outbox.length})</span>
-            </button>
+            {canViewOutbox && (
+              <button
+                type="button"
+                onClick={() => setIsOutboxOpen(true)}
+                className="sg-btn sg-btn-secondary sg-btn-sm tabular"
+                title="Open Offline Outbox Queue"
+              >
+                <CloudUpload size={14} color={outbox.length > 0 ? 'var(--accent-amber)' : 'var(--text-primary)'} />
+                <span>Outbox ({outbox.length})</span>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={onToggleNetwork}
-              className="sg-btn sg-btn-sm"
-              style={{
-                background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
-                color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
-                borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
-              }}
-              title="Toggle Online / Offline Room DB mode"
-            >
-              {isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
-              <span>{isOnline ? 'Online' : 'Offline'}</span>
-            </button>
+            {canForceSync ? (
+              <button
+                type="button"
+                onClick={onToggleNetwork}
+                className="sg-btn sg-btn-sm"
+                style={{
+                  background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
+                  color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                  borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                }}
+                title="Toggle Online / Offline Room DB mode"
+              >
+                {isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
+                <span>{isOnline ? 'Online' : 'Offline'}</span>
+              </button>
+            ) : (
+              <span
+                className="sg-badge"
+                style={{
+                  background: isOnline ? 'var(--accent-secondary-tint)' : 'var(--accent-danger-tint)',
+                  color: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                  borderColor: isOnline ? 'var(--accent-secondary)' : 'var(--accent-danger)',
+                }}
+              >
+                {isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
+                <span>{isOnline ? 'Online' : 'Offline'}</span>
+              </span>
+            )}
 
             <button
               type="button"
@@ -452,52 +520,64 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => setIsNewJobOpen(true)}
-              className="sg-btn sg-btn-primary sg-btn-sm"
-            >
-              <Plus size={15} /> New Job Intake
-            </button>
+            {canCreateIntake && (
+              <button
+                type="button"
+                onClick={() => setIsNewJobOpen(true)}
+                className="sg-btn sg-btn-primary sg-btn-sm"
+              >
+                <Plus size={15} /> New Job Intake
+              </button>
+            )}
           </div>
         </header>
 
         {/* Workspace Body */}
         <main style={{ padding: '24px 26px', flex: 1 }}>
-          {activeTab === 'overview' && (
+          {currentTab === 'overview' && (
             <DesktopAnalyticsView
               jobs={jobs}
+              allJobs={allJobs}
               employees={employees}
               branches={branches}
               activeBranchId={activeBranchId}
             />
           )}
 
-          {activeTab === 'kanban' && (
+          {currentTab === 'kanban' && (
             <DesktopKanbanView
               jobs={jobs}
               onAdvanceStatus={onAdvanceJobStatus}
-              onOpenNewJob={() => setIsNewJobOpen(true)}
-              onOpenInspection={(job) => setSelectedJobForInspection(job)}
+              onOpenNewJob={() => canCreateIntake && setIsNewJobOpen(true)}
+              onOpenInspection={(job) => canPerformDvi && setInspectionJobId(job.id)}
+              canCreateIntake={canCreateIntake}
+              canAdvanceStatus={canAdvanceStatus}
+              canPerformDvi={canPerformDvi}
+              canManageInvoices={canManageInvoices}
             />
           )}
 
-          {activeTab === 'billing' && (
+          {currentTab === 'billing' && (
             <DesktopBillingView
               jobs={jobs}
-              onOpenNewJob={() => setIsNewJobOpen(true)}
+              onOpenNewJob={() => canCreateIntake && setIsNewJobOpen(true)}
+              canManageInvoices={canManageInvoices}
+              canCreateIntake={canCreateIntake}
             />
           )}
 
-          {activeTab === 'staff' && (
+          {currentTab === 'staff' && (
             <DesktopStaffView
               employees={employees}
               jobs={jobs}
               onToggleClock={onToggleClock}
+              currentUser={currentUser}
+              canManageRoster={canManageRoster}
+              canClockSelf={canClockSelf}
             />
           )}
 
-          {activeTab === 'inventory' && (
+          {currentTab === 'inventory' && (
             <DesktopInventoryView
               inventory={inventory}
               branches={branches}
@@ -505,12 +585,15 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
               onUpdateStock={onUpdateStock}
               onTransferStock={onTransferStock}
               onOpenScanner={() => setIsScannerOpen(true)}
+              canAdjustStock={canAdjustStock}
+              canTransferStock={canTransferStock}
+              canScanBarcode={canScanBarcode}
             />
           )}
 
-          {activeTab === 'system' && (
+          {currentTab === 'system' && (
             <div style={{ maxWidth: '900px', margin: '0 auto' }}>
-              <SystemAdminView />
+              <SystemAdminView currentUser={currentUser} />
             </div>
           )}
         </main>
@@ -542,6 +625,8 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
         onClose={() => setIsScannerOpen(false)}
         inventory={inventory}
         onItemScanned={handleScannedItem}
+        canRestock={canAdjustStock}
+        canDeduct={canAdjustStock || canScanBarcode}
       />
 
       <OutboxSyncDrawer
@@ -549,13 +634,14 @@ export const DesktopDashboardLayout: React.FC<DesktopDashboardLayoutProps> = ({
         onClose={() => setIsOutboxOpen(false)}
         outbox={outbox}
         isOnline={isOnline}
+        canTriggerSync={canForceSync}
         onTriggerSync={() => syncEngine.processOutbox()}
       />
 
       {selectedJobForInspection && (
         <VehicleInspectionModal
           isOpen={!!selectedJobForInspection}
-          onClose={() => setSelectedJobForInspection(null)}
+          onClose={() => setInspectionJobId(null)}
           jobNumber={selectedJobForInspection.jobNumber}
           vehicleModel={selectedJobForInspection.vehicleModel}
           initialPoints={selectedJobForInspection.damagePoints}

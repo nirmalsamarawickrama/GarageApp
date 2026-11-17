@@ -8,6 +8,10 @@ interface DesktopKanbanViewProps {
   onAdvanceStatus: (jobId: string, nextStatus: JobStatus) => void;
   onOpenNewJob: () => void;
   onOpenInspection: (job: JobCard) => void;
+  canCreateIntake?: boolean;
+  canAdvanceStatus?: boolean;
+  canPerformDvi?: boolean;
+  canManageInvoices?: boolean;
 }
 
 const STAGE_ORDER: JobStatus[] = [
@@ -52,16 +56,26 @@ export const DesktopKanbanView: React.FC<DesktopKanbanViewProps> = ({
   onAdvanceStatus,
   onOpenNewJob,
   onOpenInspection,
+  canCreateIntake = true,
+  canAdvanceStatus = true,
+  canPerformDvi = true,
+  canManageInvoices = true,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedJobForBill, setSelectedJobForBill] = useState<JobCard | null>(null);
+  const [selectedBillJobId, setSelectedBillJobId] = useState<string | null>(null);
+
+  const selectedJobForBill = selectedBillJobId
+    ? jobs.find((j) => j.id === selectedBillJobId) || null
+    : null;
 
   const filteredJobs = jobs.filter((j) => {
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     return (
+      q === '' ||
       j.jobNumber.toLowerCase().includes(q) ||
       j.customerName.toLowerCase().includes(q) ||
       j.vehiclePlate.toLowerCase().includes(q) ||
+      j.vin.toLowerCase().includes(q) ||
       j.vehicleModel.toLowerCase().includes(q)
     );
   });
@@ -100,9 +114,11 @@ export const DesktopKanbanView: React.FC<DesktopKanbanViewProps> = ({
             />
           </div>
 
-          <button type="button" onClick={onOpenNewJob} className="sg-btn sg-btn-primary">
-            <Plus size={15} /> New Intake Job
-          </button>
+          {canCreateIntake && (
+            <button type="button" onClick={onOpenNewJob} className="sg-btn sg-btn-primary">
+              <Plus size={15} /> New Intake Job
+            </button>
+          )}
         </div>
       </div>
 
@@ -245,51 +261,57 @@ export const DesktopKanbanView: React.FC<DesktopKanbanViewProps> = ({
 
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginTop: '2px' }}>
                           <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                              type="button"
-                              onClick={() => onOpenInspection(job)}
-                              className="sg-btn sg-btn-secondary sg-btn-sm"
-                              style={{ minHeight: '28px', padding: '3px 7px', fontSize: '10px' }}
-                              title="Inspect Vehicle 360° CAD Wireframe"
-                            >
-                              <Eye size={11} /> DVI
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedJobForBill(job)}
-                              className="sg-btn sg-btn-volt sg-btn-sm"
-                              style={{ minHeight: '28px', padding: '3px 7px', fontSize: '10px' }}
-                              title="Edit Bill & Invoices"
-                            >
-                              <Receipt size={11} /> Bill
-                            </button>
+                            {canPerformDvi && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenInspection(job)}
+                                className="sg-btn sg-btn-secondary sg-btn-sm"
+                                style={{ minHeight: '28px', padding: '3px 7px', fontSize: '10px' }}
+                                title="Inspect Vehicle 360° CAD Wireframe"
+                              >
+                                <Eye size={11} /> DVI
+                              </button>
+                            )}
+                            {canManageInvoices && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBillJobId(job.id)}
+                                className="sg-btn sg-btn-volt sg-btn-sm"
+                                style={{ minHeight: '28px', padding: '3px 7px', fontSize: '10px' }}
+                                title="Edit Bill & Invoices"
+                              >
+                                <Receipt size={11} /> Bill
+                              </button>
+                            )}
                           </div>
 
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            {prevStatus && (
-                              <button
-                                type="button"
-                                onClick={() => onAdvanceStatus(job.id, prevStatus)}
-                                className="sg-btn sg-btn-secondary sg-btn-sm"
-                                style={{ minHeight: '28px', width: '28px', padding: 0 }}
-                                title="Move back one stage"
-                                aria-label="Move back one stage"
-                              >
-                                <ArrowLeft size={12} />
-                              </button>
-                            )}
-                            {nextStatus && (
-                              <button
-                                type="button"
-                                onClick={() => onAdvanceStatus(job.id, nextStatus)}
-                                className="sg-btn sg-btn-primary sg-btn-sm"
-                                style={{ minHeight: '28px', padding: '3px 8px', fontSize: '10px' }}
-                                title="Advance to next stage"
-                              >
-                                Advance <ArrowRight size={11} />
-                              </button>
-                            )}
-                          </div>
+                          {canAdvanceStatus && (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              {prevStatus && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAdvanceStatus(job.id, prevStatus)}
+                                  className="sg-btn sg-btn-secondary sg-btn-sm"
+                                  style={{ minHeight: '28px', width: '28px', padding: 0 }}
+                                  title="Move back one stage"
+                                  aria-label="Move back one stage"
+                                >
+                                  <ArrowLeft size={12} />
+                                </button>
+                              )}
+                              {nextStatus && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAdvanceStatus(job.id, nextStatus)}
+                                  className="sg-btn sg-btn-primary sg-btn-sm"
+                                  style={{ minHeight: '28px', padding: '3px 8px', fontSize: '10px' }}
+                                  title="Advance to next stage"
+                                >
+                                  Advance <ArrowRight size={11} />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -304,7 +326,7 @@ export const DesktopKanbanView: React.FC<DesktopKanbanViewProps> = ({
       {selectedJobForBill && (
         <DesktopBillEditModal
           isOpen={!!selectedJobForBill}
-          onClose={() => setSelectedJobForBill(null)}
+          onClose={() => setSelectedBillJobId(null)}
           job={selectedJobForBill}
         />
       )}

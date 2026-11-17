@@ -27,11 +27,13 @@ export const DesktopBillEditModal: React.FC<DesktopBillEditModalProps> = (props)
 const DesktopBillEditModalContent: React.FC<
   DesktopBillEditModalProps & { job: JobCard }
 > = ({ onClose, job, onSaved }) => {
-  const [laborCost, setLaborCost] = useState<number>(job.estimatedLaborCost || 0);
+  const initialHourlyRate = 95;
+  const initialLaborCost = job.estimatedLaborCost ?? 0;
+  const [hourlyRate, setHourlyRate] = useState<number>(initialHourlyRate);
   const [laborHours, setLaborHours] = useState<number>(
-    Math.max(1, Math.round((job.estimatedLaborCost || 120) / 95))
+    initialLaborCost > 0 ? Math.round((initialLaborCost / initialHourlyRate) * 100) / 100 : 0
   );
-  const [hourlyRate, setHourlyRate] = useState<number>(95);
+  const [laborCost, setLaborCost] = useState<number>(initialLaborCost);
   const [billingStatus, setBillingStatus] = useState<NonNullable<JobCard['billingStatus']>>(
     job.billingStatus || 'INVOICED'
   );
@@ -39,63 +41,83 @@ const DesktopBillEditModalContent: React.FC<
     job.paymentMethod || 'Card'
   );
   const [paidAmount, setPaidAmount] = useState<number>(
-    job.paidAmount || (job.billingStatus === 'PAID' ? job.totalCost : 0)
+    job.paidAmount ?? (job.billingStatus === 'PAID' ? job.totalCost : 0)
   );
-  const [discountAmount, setDiscountAmount] = useState<number>(job.discountAmount || 0);
+  const [discountAmount, setDiscountAmount] = useState<number>(job.discountAmount ?? 0);
   const [invoiceNumber, setInvoiceNumber] = useState<string>(
     job.invoiceNumber || `INV-2026-${job.jobNumber.slice(-4)}`
   );
 
-  const [parts, setParts] = useState<AllocatedPartLine[]>(
-    job.allocatedParts && job.allocatedParts.length > 0
-      ? [...job.allocatedParts]
-      : [
-          {
-            partId: 'inv-1',
-            partName: 'Standard Service Consumables & Fluids',
-            quantity: 1,
-            unitPrice: job.partsCost || 45.0,
-          },
-        ]
-  );
+  const [parts, setParts] = useState<AllocatedPartLine[]>(() => {
+    if (job.allocatedParts && job.allocatedParts.length > 0) {
+      return job.allocatedParts.map((p) => ({ ...p }));
+    }
+    if ((job.partsCost ?? 0) > 0) {
+      return [
+        {
+          partId: 'inv-consumables',
+          partName: 'Standard Service Consumables & Fluids',
+          quantity: 1,
+          unitPrice: job.partsCost,
+        },
+      ];
+    }
+    return [];
+  });
 
   const [newPartName, setNewPartName] = useState('');
-  const [newPartQty, setNewPartQty] = useState(1);
-  const [newPartPrice, setNewPartPrice] = useState(25);
+  const [newPartQty, setNewPartQty] = useState('1');
+  const [newPartPrice, setNewPartPrice] = useState('25');
   const [isAddingPart, setIsAddingPart] = useState(false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
 
-  const calculatedPartsTotal = parts.reduce((sum, p) => sum + p.quantity * p.unitPrice, 0);
-  const effectiveLaborTotal = laborCost;
-  const subtotal = Math.max(0, effectiveLaborTotal + calculatedPartsTotal - discountAmount);
+  const calculatedPartsTotal =
+    Math.round(parts.reduce((sum, p) => sum + p.quantity * p.unitPrice, 0) * 100) / 100;
+  const effectiveLaborTotal = Math.round(Math.max(0, laborCost) * 100) / 100;
+  const safeDiscount = Math.max(0, discountAmount);
+  const subtotal = Math.max(0, effectiveLaborTotal + calculatedPartsTotal - safeDiscount);
   const taxAmount = Math.round(subtotal * 0.08 * 100) / 100;
   const grandTotal = Math.round((subtotal + taxAmount) * 100) / 100;
   const balanceDue = Math.max(0, Math.round((grandTotal - paidAmount) * 100) / 100);
 
   const handleLaborHoursChange = (hrs: number) => {
-    setLaborHours(hrs);
-    setLaborCost(hrs * hourlyRate);
+    const safeHrs = Math.max(0, hrs);
+    setLaborHours(safeHrs);
+    setLaborCost(Math.round(safeHrs * hourlyRate * 100) / 100);
   };
 
   const handleHourlyRateChange = (rate: number) => {
-    setHourlyRate(rate);
-    setLaborCost(laborHours * rate);
+    const safeRate = Math.max(0, rate);
+    setHourlyRate(safeRate);
+    setLaborCost(Math.round(laborHours * safeRate * 100) / 100);
+  };
+
+  const handleLaborSubtotalChange = (cost: number) => {
+    const safeCost = Math.max(0, cost);
+    setLaborCost(safeCost);
+    setLaborHours(hourlyRate > 0 ? Math.round((safeCost / hourlyRate) * 100) / 100 : 0);
   };
 
   const handleAddPart = () => {
     if (!newPartName.trim()) return;
+    const qty = Math.max(0.1, parseFloat(newPartQty) || 1);
+    const price = Math.max(0, parseFloat(newPartPrice) || 0);
+    const partId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `part-custom-${crypto.randomUUID().slice(0, 8)}`
+        : `part-custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setParts([
       ...parts,
       {
-        partId: `part-custom-${Date.now()}`,
+        partId,
         partName: newPartName.trim(),
-        quantity: Math.max(1, newPartQty),
-        unitPrice: Math.max(0, newPartPrice),
+        quantity: qty,
+        unitPrice: price,
       },
     ]);
     setNewPartName('');
-    setNewPartQty(1);
-    setNewPartPrice(25);
+    setNewPartQty('1');
+    setNewPartPrice('25');
     setIsAddingPart(false);
   };
 
@@ -103,12 +125,40 @@ const DesktopBillEditModalContent: React.FC<
     setParts(parts.filter((_, i) => i !== index));
   };
 
+  const handleBillingStatusChange = (nextStatus: NonNullable<JobCard['billingStatus']>) => {
+    setBillingStatus(nextStatus);
+    if (nextStatus === 'PAID') {
+      setPaidAmount(grandTotal);
+    } else if (nextStatus === 'PENDING' || nextStatus === 'INVOICED') {
+      setPaidAmount(0);
+    }
+  };
+
+  const handlePaidAmountChange = (amt: number) => {
+    const safePaid = Math.max(0, amt);
+    setPaidAmount(safePaid);
+    if (safePaid >= grandTotal && grandTotal > 0) {
+      setBillingStatus('PAID');
+    } else if (safePaid > 0) {
+      setBillingStatus('PARTIAL');
+    } else if (billingStatus === 'PAID' || billingStatus === 'PARTIAL') {
+      setBillingStatus('INVOICED');
+    }
+  };
+
   const handleSaveBill = () => {
     let resolvedStatus = billingStatus;
-    if (paidAmount >= grandTotal && grandTotal > 0) {
+    let resolvedPaid = Math.max(0, paidAmount);
+
+    if (resolvedPaid >= grandTotal && grandTotal > 0) {
       resolvedStatus = 'PAID';
-    } else if (paidAmount > 0 && paidAmount < grandTotal) {
+    } else if (resolvedPaid > 0 && resolvedPaid < grandTotal) {
       resolvedStatus = 'PARTIAL';
+    } else if (resolvedPaid === 0 && (resolvedStatus === 'PAID' || resolvedStatus === 'PARTIAL')) {
+      resolvedStatus = resolvedStatus === 'PAID' ? 'PAID' : 'INVOICED';
+      if (resolvedStatus === 'PAID') {
+        resolvedPaid = grandTotal;
+      }
     }
 
     syncEngine.updateJobCardBilling(job.id, {
@@ -116,9 +166,9 @@ const DesktopBillEditModalContent: React.FC<
       partsCost: calculatedPartsTotal,
       totalCost: grandTotal,
       taxAmount,
-      discountAmount,
+      discountAmount: safeDiscount,
       billingStatus: resolvedStatus,
-      paidAmount,
+      paidAmount: resolvedPaid,
       paymentMethod,
       invoiceNumber,
       allocatedParts: parts,
@@ -462,9 +512,10 @@ const DesktopBillEditModalContent: React.FC<
                     <input
                       type="number"
                       step="1"
+                      min="0"
                       className="sg-input sg-input-mono"
                       value={laborCost}
-                      onChange={(e) => setLaborCost(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => handleLaborSubtotalChange(parseFloat(e.target.value) || 0)}
                     />
                   </div>
                 </div>
@@ -508,18 +559,20 @@ const DesktopBillEditModalContent: React.FC<
                     />
                     <input
                       type="number"
-                      min="1"
+                      min="0.1"
+                      step="0.5"
                       className="sg-input sg-input-mono"
                       value={newPartQty}
-                      onChange={(e) => setNewPartQty(parseInt(e.target.value, 10) || 1)}
+                      onChange={(e) => setNewPartQty(e.target.value)}
                       style={{ width: '80px' }}
                     />
                     <input
                       type="number"
+                      min="0"
                       step="0.5"
                       className="sg-input sg-input-mono"
                       value={newPartPrice}
-                      onChange={(e) => setNewPartPrice(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => setNewPartPrice(e.target.value)}
                       style={{ width: '100px' }}
                     />
                     <button type="button" onClick={handleAddPart} className="sg-btn sg-btn-primary sg-btn-sm">
@@ -546,11 +599,13 @@ const DesktopBillEditModalContent: React.FC<
                           <td style={{ textAlign: 'center' }}>
                             <input
                               type="number"
-                              min="1"
+                              min="0.1"
+                              step="0.5"
                               className="sg-input sg-input-mono"
                               value={p.quantity}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value, 10) || 1;
+                                const parsed = parseFloat(e.target.value);
+                                const val = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
                                 const updated = [...parts];
                                 updated[idx] = { ...updated[idx], quantity: val };
                                 setParts(updated);
@@ -561,11 +616,13 @@ const DesktopBillEditModalContent: React.FC<
                           <td style={{ textAlign: 'right' }}>
                             <input
                               type="number"
+                              min="0"
                               step="0.5"
                               className="sg-input sg-input-mono"
                               value={p.unitPrice}
                               onChange={(e) => {
-                                const val = parseFloat(e.target.value) || 0;
+                                const parsed = parseFloat(e.target.value);
+                                const val = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
                                 const updated = [...parts];
                                 updated[idx] = { ...updated[idx], unitPrice: val };
                                 setParts(updated);
@@ -620,7 +677,9 @@ const DesktopBillEditModalContent: React.FC<
                     <select
                       className="sg-select"
                       value={billingStatus}
-                      onChange={(e) => setBillingStatus(e.target.value as NonNullable<JobCard['billingStatus']>)}
+                      onChange={(e) =>
+                        handleBillingStatusChange(e.target.value as NonNullable<JobCard['billingStatus']>)
+                      }
                     >
                       <option value="PENDING">PENDING (Unbilled)</option>
                       <option value="INVOICED">INVOICED (Sent)</option>
@@ -649,7 +708,7 @@ const DesktopBillEditModalContent: React.FC<
                       min="0"
                       className="sg-input sg-input-mono"
                       value={discountAmount}
-                      onChange={(e) => setDiscountAmount(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => setDiscountAmount(Math.max(0, parseFloat(e.target.value) || 0))}
                     />
                   </div>
                   <div>
@@ -661,11 +720,11 @@ const DesktopBillEditModalContent: React.FC<
                         min="0"
                         className="sg-input sg-input-mono"
                         value={paidAmount}
-                        onChange={(e) => setPaidAmount(parseFloat(e.target.value) || 0)}
+                        onChange={(e) => handlePaidAmountChange(parseFloat(e.target.value) || 0)}
                       />
                       <button
                         type="button"
-                        onClick={() => setPaidAmount(grandTotal)}
+                        onClick={() => handlePaidAmountChange(grandTotal)}
                         className="sg-btn sg-btn-secondary sg-btn-sm"
                         title="Mark fully settled"
                       >

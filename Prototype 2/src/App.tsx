@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { syncEngine } from './state/syncEngine';
 import { authEngine } from './auth/authEngine';
@@ -47,8 +47,9 @@ export function App() {
   const [isOutboxOpen, setIsOutboxOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isWifiSyncOpen, setIsWifiSyncOpen] = useState(false);
-  const [selectedJobForInspection, setSelectedJobForInspection] = useState<JobCard | null>(null);
+  const [inspectionJobId, setInspectionJobId] = useState<string | null>(null);
   const [permissionNotice, setPermissionNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const unsubSync = syncEngine.subscribe(() => setTick((t) => t + 1));
@@ -59,8 +60,22 @@ export function App() {
       unsubSync();
       unsubAuth();
       window.removeEventListener('resize', handleResize);
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
     };
   }, []);
+
+  const showNotice = (msg: string) => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    setPermissionNotice(msg);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setPermissionNotice(null);
+      noticeTimerRef.current = null;
+    }, 3500);
+  };
 
   const useDesktopSurface =
     !isNativeApp &&
@@ -91,35 +106,98 @@ export function App() {
     );
   }
 
+  const canSwitchBranches = hasPermission(currentUser, 'system:switch_all_branches');
+  const effectiveBranchId = canSwitchBranches ? activeBranchId : currentUser.branchId;
   const activeBranch =
-    INITIAL_BRANCHES.find((b) => b.id === activeBranchId) || INITIAL_BRANCHES[0];
+    INITIAL_BRANCHES.find((b) => b.id === effectiveBranchId) || INITIAL_BRANCHES[0];
+
+  const branchJobs = jobs.filter((j) => j.branchId === effectiveBranchId);
+  const branchInventory = inventory.filter((i) => i.branchId === effectiveBranchId);
+  const branchEmployees = employees.filter((e) => e.branchId === effectiveBranchId);
+
+  const selectedJobForInspection = inspectionJobId
+    ? branchJobs.find((j) => j.id === inspectionJobId) || null
+    : null;
+
+  const canCreateIntake = hasPermission(currentUser, 'job:create_intake');
+  const canAdvanceStatus = hasPermission(currentUser, 'job:advance_status');
+  const canPerformDvi = hasPermission(currentUser, 'job:perform_dvi');
+  const canAdjustStock = hasPermission(currentUser, 'inventory:adjust_stock');
+  const canTransferStock = hasPermission(currentUser, 'inventory:transfer_branch');
+  const canScanBarcode = hasPermission(currentUser, 'inventory:scan_barcode');
+  const canManageRoster = hasPermission(currentUser, 'employee:manage_roster');
+  const canClockSelf = hasPermission(currentUser, 'employee:clock_self');
+  const canSendReminders = hasPermission(currentUser, 'finance:send_reminders');
+  const canViewOutbox = hasPermission(currentUser, 'system:view_outbox');
+  const canForceSync = hasPermission(currentUser, 'system:force_sync');
+
+  const handleSelectBranch = (id: string) => {
+    if (!canSwitchBranches) {
+      showNotice('Branch switching requires Owner, Accountant, or IT Admin permissions.');
+      return;
+    }
+    syncEngine.setActiveBranchId(id);
+  };
+
+  const handleToggleNetwork = () => {
+    if (!canForceSync) {
+      showNotice('Network offline toggle requires Manager or IT Admin permissions.');
+      return;
+    }
+    syncEngine.setOnlineStatus(!isOnline);
+  };
 
   const handleAdvanceStatus = (jobId: string, nextStatus: JobStatus) => {
+    if (!canAdvanceStatus) {
+      showNotice('Advancing repair stages requires Mechanic, Manager, or Owner role.');
+      return;
+    }
     syncEngine.advanceJobStatus(jobId, nextStatus);
   };
 
   const handleCreateJob = (
     jobData: Omit<JobCard, 'id' | 'jobNumber' | 'createdAt' | 'updatedAt' | 'version'>
   ) => {
+    if (!canCreateIntake) {
+      showNotice('Vehicle intake requires Manager or Owner role permissions.');
+      return;
+    }
     syncEngine.createJobCard(jobData);
   };
 
   const handleUpdateStock = (itemId: string, delta: number) => {
+    if (!canAdjustStock) {
+      showNotice('Adjusting inventory stock directly requires Manager, Owner, Accountant, or IT Admin role.');
+      return;
+    }
     syncEngine.updateInventoryStock(itemId, delta);
   };
 
-  const handleTransferStock = (itemId: string, targetBranchId: string, qty: number) => {
-    syncEngine.transferStock(itemId, targetBranchId, qty);
+  const handleTransferStock = (itemId: string, targetBranchId: string, qty: number): boolean => {
+    if (!canTransferStock) {
+      showNotice('Inter-branch stock transfers require Manager, Owner, or IT Admin role.');
+      return false;
+    }
+    return syncEngine.transferStock(itemId, targetBranchId, qty);
   };
 
   const handleToggleClock = (empId: string) => {
+    const target = employees.find((e) => e.id === empId);
+    const isSelf =
+      !!target &&
+      (target.userId === currentUser.id ||
+        target.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase());
+    if (!canManageRoster && !(canClockSelf && isSelf)) {
+      showNotice('You can only clock your own shift unless you hold Manager or Owner permissions.');
+      return;
+    }
     syncEngine.toggleEmployeeClock(empId);
   };
 
   const handleSaveInspection = (points: Parameters<typeof syncEngine.saveInspectionPoints>[1]) => {
-    if (selectedJobForInspection) {
+    if (selectedJobForInspection && canPerformDvi) {
       syncEngine.saveInspectionPoints(selectedJobForInspection.id, points);
-      setSelectedJobForInspection(null);
+      setInspectionJobId(null);
     }
   };
 
@@ -127,9 +205,9 @@ export function App() {
     item: InventoryItem,
     action: 'INSPECT' | 'DEDUCT' | 'RESTOCK'
   ) => {
-    if (action === 'DEDUCT') {
+    if (action === 'DEDUCT' && (canAdjustStock || canScanBarcode)) {
       syncEngine.updateInventoryStock(item.id, -1);
-    } else if (action === 'RESTOCK') {
+    } else if (action === 'RESTOCK' && canAdjustStock) {
       syncEngine.updateInventoryStock(item.id, 5);
     }
   };
@@ -139,14 +217,15 @@ export function App() {
       <DesktopDashboardLayout
         currentUser={currentUser}
         branches={INITIAL_BRANCHES}
-        activeBranchId={activeBranchId}
-        onSelectBranch={(id) => syncEngine.setActiveBranchId(id)}
-        jobs={jobs}
-        employees={employees}
-        inventory={inventory}
+        activeBranchId={effectiveBranchId}
+        onSelectBranch={handleSelectBranch}
+        jobs={branchJobs}
+        allJobs={jobs}
+        employees={branchEmployees}
+        inventory={branchInventory}
         outbox={outbox}
         isOnline={isOnline}
-        onToggleNetwork={() => syncEngine.setOnlineStatus(!isOnline)}
+        onToggleNetwork={handleToggleNetwork}
         onAdvanceJobStatus={handleAdvanceStatus}
         onCreateJob={handleCreateJob}
         onUpdateStock={handleUpdateStock}
@@ -174,16 +253,19 @@ export function App() {
     >
       <MobileHeader
         branches={INITIAL_BRANCHES}
-        activeBranchId={activeBranchId}
-        onSelectBranch={(id) => syncEngine.setActiveBranchId(id)}
+        activeBranchId={effectiveBranchId}
+        onSelectBranch={handleSelectBranch}
         isOnline={isOnline}
         outboxCount={outbox.length}
-        onOpenOutbox={() => setIsOutboxOpen(true)}
-        onToggleNetwork={() => syncEngine.setOnlineStatus(!isOnline)}
+        onOpenOutbox={() => canViewOutbox && setIsOutboxOpen(true)}
+        onToggleNetwork={handleToggleNetwork}
         currentUser={currentUser}
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenWifiSync={() => setIsWifiSyncOpen(true)}
         onSwitchToDesktop={!isNativeApp ? () => setSurfaceOverride('desktop') : undefined}
+        canSwitchBranches={canSwitchBranches}
+        canViewOutbox={canViewOutbox}
+        canForceSync={canForceSync}
       />
 
       {permissionNotice && (
@@ -205,42 +287,54 @@ export function App() {
       <main style={{ flex: 1, overflowY: 'auto', paddingBottom: '92px' }}>
         {currentMobileTab === 'jobs' && hasPermission(currentUser, 'job:view') && (
           <WorkProgressView
-            jobs={jobs}
+            jobs={branchJobs}
             onAdvanceStatus={handleAdvanceStatus}
             onOpenNewJob={() => {
-              if (hasPermission(currentUser, 'job:create_intake')) {
+              if (canCreateIntake) {
                 setIsNewJobOpen(true);
               } else {
-                setPermissionNotice('Vehicle intake requires Manager or Owner role permissions.');
-                setTimeout(() => setPermissionNotice(null), 3500);
+                showNotice('Vehicle intake requires Manager or Owner role permissions.');
               }
             }}
-            onOpenInspection={(job) => setSelectedJobForInspection(job)}
+            onOpenInspection={(job) => canPerformDvi && setInspectionJobId(job.id)}
+            canCreateIntake={canCreateIntake}
+            canAdvanceStatus={canAdvanceStatus}
+            canPerformDvi={canPerformDvi}
           />
         )}
 
         {currentMobileTab === 'inventory' && hasPermission(currentUser, 'inventory:view') && (
           <InventoryView
-            inventory={inventory}
-            onOpenScanner={() => setIsScannerOpen(true)}
+            inventory={branchInventory}
+            onOpenScanner={() => canScanBarcode && setIsScannerOpen(true)}
             onUpdateStock={handleUpdateStock}
             onTransferStock={handleTransferStock}
+            canAdjustStock={canAdjustStock}
+            canTransferStock={canTransferStock}
+            canScanBarcode={canScanBarcode}
           />
         )}
 
         {currentMobileTab === 'employees' && hasPermission(currentUser, 'employee:view') && (
           <EmployeesView
-            employees={employees}
+            employees={branchEmployees}
             onToggleClock={handleToggleClock}
+            currentUser={currentUser}
+            canManageRoster={canManageRoster}
+            canClockSelf={canClockSelf}
           />
         )}
 
         {currentMobileTab === 'sales' && hasPermission(currentUser, 'finance:view_kpis') && (
-          <SalesInsightsView activeBranchName={activeBranch.name} />
+          <SalesInsightsView
+            activeBranch={activeBranch}
+            jobs={branchJobs}
+            canSendReminders={canSendReminders}
+          />
         )}
 
         {currentMobileTab === 'admin' && hasPermission(currentUser, 'system:view_outbox') && (
-          <SystemAdminView />
+          <SystemAdminView currentUser={currentUser} />
         )}
       </main>
 
@@ -259,7 +353,7 @@ export function App() {
           activeTab={currentMobileTab}
           onTabChange={setActiveMobileTab}
           user={currentUser}
-          state={{ jobs, inventory, outbox }}
+          state={{ jobs: branchJobs, inventory: branchInventory, outbox }}
         />
       </div>
 
@@ -273,22 +367,24 @@ export function App() {
       <NewJobCardModal
         isOpen={isNewJobOpen}
         onClose={() => setIsNewJobOpen(false)}
-        employees={employees}
-        activeBranchId={activeBranchId}
+        employees={branchEmployees}
+        activeBranchId={effectiveBranchId}
         onCreateJob={handleCreateJob}
       />
 
       <BarcodeScannerModal
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
-        inventory={inventory}
+        inventory={branchInventory}
         onItemScanned={handleScannedItem}
+        canRestock={canAdjustStock}
+        canDeduct={canAdjustStock || canScanBarcode}
       />
 
       {selectedJobForInspection && (
         <VehicleInspectionModal
           isOpen={!!selectedJobForInspection}
-          onClose={() => setSelectedJobForInspection(null)}
+          onClose={() => setInspectionJobId(null)}
           jobNumber={selectedJobForInspection.jobNumber}
           vehicleModel={selectedJobForInspection.vehicleModel}
           initialPoints={selectedJobForInspection.damagePoints}
@@ -301,6 +397,7 @@ export function App() {
         onClose={() => setIsOutboxOpen(false)}
         outbox={outbox}
         isOnline={isOnline}
+        canTriggerSync={canForceSync}
         onTriggerSync={() => syncEngine.processOutbox()}
       />
 

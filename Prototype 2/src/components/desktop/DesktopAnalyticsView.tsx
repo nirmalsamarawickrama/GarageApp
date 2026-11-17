@@ -4,6 +4,7 @@ import { JobCard, Employee, GarageBranch } from '../../types';
 
 interface DesktopAnalyticsViewProps {
   jobs: JobCard[];
+  allJobs?: JobCard[];
   employees: Employee[];
   branches: GarageBranch[];
   activeBranchId: string;
@@ -17,6 +18,7 @@ const RANGES: { id: '7D' | '30D' | 'YTD'; label: string; scale: number }[] = [
 
 export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
   jobs,
+  allJobs,
   employees,
   branches,
   activeBranchId,
@@ -25,28 +27,55 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
   const activeBranch = branches.find((b) => b.id === activeBranchId) || branches[0];
   const activeRange = RANGES.find((r) => r.id === timeRange) || RANGES[0];
   const rangeIdx = RANGES.findIndex((r) => r.id === timeRange);
+  const networkJobs = allJobs ?? jobs;
 
   const totalLaborRevenue = jobs.reduce((sum, j) => sum + (j.estimatedLaborCost || 0), 0);
   const totalPartsRevenue = jobs.reduce((sum, j) => sum + (j.partsCost || 0), 0);
-  const totalRevenue = totalLaborRevenue + totalPartsRevenue;
-  const avgOrderValue = jobs.length > 0 ? totalRevenue / jobs.length : 0;
+  const totalTaxRevenue = jobs.reduce((sum, j) => sum + (j.taxAmount ?? 0), 0);
+  const totalBilled = jobs.reduce((sum, j) => sum + (j.totalCost || 0), 0);
+  const avgOrderValue = jobs.length > 0 ? totalBilled / jobs.length : 0;
 
   const avgEfficiency =
     employees.length > 0
       ? Math.round(employees.reduce((sum, e) => sum + e.efficiencyRating, 0) / employees.length)
       : 100;
 
+  // Dynamic Bay Utilization derived from live working technicians & active repair orders in this branch
+  const occupiedBaySet = new Set<string>();
+  employees.forEach((e) => {
+    if (e.status === 'Working on Job' && e.activeBay) {
+      occupiedBaySet.add(e.activeBay.split('(')[0].trim());
+    }
+  });
+  jobs.forEach((j) => {
+    if (j.status !== 'READY_DELIVERY' && j.assignedBay) {
+      occupiedBaySet.add(j.assignedBay.split('(')[0].trim());
+    }
+  });
+  const occupiedBaysCount = Math.min(activeBranch.baysCount, occupiedBaySet.size);
+  const bayUtilizationPct =
+    activeBranch.baysCount > 0
+      ? Math.round((occupiedBaysCount / activeBranch.baysCount) * 1000) / 10
+      : 0;
+
+  // Revenue mix percentages computed from live branch job cards
+  const mixTotal = Math.max(1, totalLaborRevenue + totalPartsRevenue + totalTaxRevenue);
+  const laborMixPct = Math.round((totalLaborRevenue / mixTotal) * 1000) / 10;
+  const partsMixPct = Math.round((totalPartsRevenue / mixTotal) * 1000) / 10;
+  const taxMixPct = Math.max(0, Math.round((100 - laborMixPct - partsMixPct) * 10) / 10);
+
+  const branchScale = activeBranch.monthlyRevenue / 64200;
   const weeklyData = [
-    { day: 'Mon', labor: Math.round(1420 * activeRange.scale), parts: Math.round(980 * activeRange.scale) },
-    { day: 'Tue', labor: Math.round(1850 * activeRange.scale), parts: Math.round(1240 * activeRange.scale) },
-    { day: 'Wed', labor: Math.round(2100 * activeRange.scale), parts: Math.round(1450 * activeRange.scale) },
-    { day: 'Thu', labor: Math.round(1980 * activeRange.scale), parts: Math.round(1120 * activeRange.scale) },
-    { day: 'Fri', labor: Math.round(2650 * activeRange.scale), parts: Math.round(1890 * activeRange.scale) },
-    { day: 'Sat', labor: Math.round(3100 * activeRange.scale), parts: Math.round(2200 * activeRange.scale) },
-    { day: 'Sun', labor: Math.round(890 * activeRange.scale), parts: Math.round(450 * activeRange.scale) },
+    { day: 'Mon', labor: Math.round(1420 * activeRange.scale * branchScale), parts: Math.round(980 * activeRange.scale * branchScale) },
+    { day: 'Tue', labor: Math.round(1850 * activeRange.scale * branchScale), parts: Math.round(1240 * activeRange.scale * branchScale) },
+    { day: 'Wed', labor: Math.round(2100 * activeRange.scale * branchScale), parts: Math.round(1450 * activeRange.scale * branchScale) },
+    { day: 'Thu', labor: Math.round(1980 * activeRange.scale * branchScale), parts: Math.round(1120 * activeRange.scale * branchScale) },
+    { day: 'Fri', labor: Math.round(2650 * activeRange.scale * branchScale), parts: Math.round(1890 * activeRange.scale * branchScale) },
+    { day: 'Sat', labor: Math.round(3100 * activeRange.scale * branchScale), parts: Math.round(2200 * activeRange.scale * branchScale) },
+    { day: 'Sun', labor: Math.round(890 * activeRange.scale * branchScale), parts: Math.round(450 * activeRange.scale * branchScale) },
   ];
 
-  const maxDayTotal = Math.max(...weeklyData.map((d) => d.labor + d.parts));
+  const maxDayTotal = Math.max(1, ...weeklyData.map((d) => d.labor + d.parts));
 
   const statusCounts = {
     INTAKE: jobs.filter((j) => j.status === 'INTAKE').length,
@@ -118,9 +147,9 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', fontSize: '12px' }}>
             <span style={{ color: 'var(--accent-secondary)', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
-              <ArrowUpRight size={14} /> +14.8%
+              <ArrowUpRight size={14} /> ${totalBilled.toFixed(0)}
             </span>
-            <span style={{ color: 'var(--text-muted)' }}>vs previous month</span>
+            <span style={{ color: 'var(--text-muted)' }}>in current branch ROs</span>
           </div>
         </div>
 
@@ -134,9 +163,9 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', fontSize: '12px' }}>
             <span style={{ color: 'var(--accent-primary)', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
-              <ArrowUpRight size={14} /> +6.2%
+              <ArrowUpRight size={14} /> {jobs.length} ROs
             </span>
-            <span style={{ color: 'var(--text-muted)' }}>labor + parts mix</span>
+            <span style={{ color: 'var(--text-muted)' }}>labor + parts + tax</span>
           </div>
         </div>
 
@@ -146,22 +175,29 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
             <Wrench size={18} color="var(--accent-amber)" />
           </div>
           <div className="tabular" style={{ fontFamily: 'var(--font-mono)', fontSize: '28px', fontWeight: 700, marginTop: '6px' }}>
-            87.5%
+            {bayUtilizationPct}%
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '2px', marginTop: '8px' }}>
-            {Array.from({ length: 8 }).map((_, i) => (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${activeBranch.baysCount}, 1fr)`,
+              gap: '2px',
+              marginTop: '8px',
+            }}
+          >
+            {Array.from({ length: activeBranch.baysCount }).map((_, i) => (
               <div
                 key={i}
                 style={{
                   height: '5px',
-                  background: i < 7 ? 'var(--accent-amber)' : 'var(--bg-recessed)',
+                  background: i < occupiedBaysCount ? 'var(--accent-amber)' : 'var(--bg-recessed)',
                   border: '1px solid var(--border-subtle)',
                 }}
               />
             ))}
           </div>
           <div style={{ marginTop: '6px', fontSize: '12px', fontWeight: 700, color: 'var(--accent-amber)' }}>
-            7 of {activeBranch.baysCount} Bays Occupied
+            {occupiedBaysCount} of {activeBranch.baysCount} Bays Occupied
           </div>
         </div>
 
@@ -177,7 +213,7 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
             <div style={{ width: `${Math.min(100, avgEfficiency)}%`, height: '100%', background: 'var(--accent-secondary)' }} />
           </div>
           <div style={{ marginTop: '6px', fontSize: '12px', fontWeight: 700, color: 'var(--accent-secondary)' }}>
-            Billed vs. Clocked Hours
+            Billed vs. Clocked Hours ({employees.length} staff)
           </div>
         </div>
       </div>
@@ -189,7 +225,7 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
             <div>
               <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Revenue Flow (Labor vs. Parts)</h2>
               <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Cumulative workshop billing ({activeRange.label})
+                Cumulative workshop billing ({activeRange.label}) &bull; {activeBranch.name}
               </div>
             </div>
 
@@ -209,8 +245,8 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
             {weeklyData.map((d) => {
               const totalDay = d.labor + d.parts;
               const heightPx = Math.max(24, Math.round((totalDay / maxDayTotal) * 155));
-              const laborPercent = (d.labor / totalDay) * 100;
-              const partsPercent = (d.parts / totalDay) * 100;
+              const laborPercent = totalDay > 0 ? (d.labor / totalDay) * 100 : 50;
+              const partsPercent = totalDay > 0 ? (d.parts / totalDay) * 100 : 50;
 
               return (
                 <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', flex: 1 }}>
@@ -257,14 +293,14 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
           <div>
             <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Revenue Structure</h2>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-              Profit contributions by service department
+              Live contributions from active branch repair orders
             </p>
 
             <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {[
-                { label: 'Mechanical Diagnostic & Labor', pct: '58.2%', color: 'var(--accent-primary)' },
-                { label: 'OEM & Aftermarket Parts', pct: '34.5%', color: 'var(--accent-volt)' },
-                { label: 'Environmental & Shop Consumables', pct: '7.3%', color: 'var(--accent-secondary)' },
+                { label: 'Mechanical Diagnostic & Labor', pct: `${laborMixPct}%`, color: 'var(--accent-primary)' },
+                { label: 'OEM & Aftermarket Parts', pct: `${partsMixPct}%`, color: 'var(--accent-volt)' },
+                { label: 'Sales Tax & Shop Levies', pct: `${taxMixPct}%`, color: 'var(--accent-secondary)' },
               ].map((row) => (
                 <div key={row.label}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
@@ -291,10 +327,10 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
             }}
           >
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' }}>
-              Gross Operating Margin
+              Branch Labor Share
             </div>
             <div className="tabular" style={{ fontFamily: 'var(--font-mono)', fontSize: '22px', fontWeight: 700, marginTop: '2px' }}>
-              64.2% <span style={{ fontSize: '12px', fontWeight: 600 }}>(+2.1% target beat)</span>
+              {laborMixPct}% <span style={{ fontSize: '12px', fontWeight: 600 }}>of ${totalBilled.toFixed(0)} billed</span>
             </div>
           </div>
         </div>
@@ -304,7 +340,7 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
       <div className="sg-analytics-bottom">
         <div className="sg-panel" style={{ padding: '22px' }}>
           <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '14px' }}>
-            Live Repair Orders in Workshop ({jobs.length} Active)
+            Live Repair Orders in Branch ({jobs.length} Active)
           </h2>
 
           <div className="sg-grid-matrix" style={{ gridTemplateColumns: 'repeat(5, 1fr)', textAlign: 'center' }}>
@@ -338,30 +374,39 @@ export const DesktopAnalyticsView: React.FC<DesktopAnalyticsViewProps> = ({
                   <th>Branch Hub</th>
                   <th style={{ textAlign: 'center' }}>Bays</th>
                   <th style={{ textAlign: 'center' }}>Active Jobs</th>
-                  <th style={{ textAlign: 'right' }}>Monthly Rev</th>
+                  <th style={{ textAlign: 'right' }}>Open Billed / Monthly</th>
                 </tr>
               </thead>
               <tbody>
-                {branches.map((b) => (
-                  <tr
-                    key={b.id}
-                    style={{
-                      background: b.id === activeBranchId ? 'var(--accent-primary-tint)' : 'transparent',
-                    }}
-                  >
-                    <td>
-                      <div style={{ fontWeight: 700 }}>{b.name}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.city}</div>
-                    </td>
-                    <td className="tabular" style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>{b.baysCount}</td>
-                    <td className="tabular" style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                      {b.activeJobsCount}
-                    </td>
-                    <td className="tabular" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-secondary)' }}>
-                      ${b.monthlyRevenue.toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {branches.map((b) => {
+                  const branchActiveJobs = networkJobs.filter(
+                    (j) => j.branchId === b.id && j.status !== 'READY_DELIVERY'
+                  ).length;
+                  const branchOpenBilled = networkJobs
+                    .filter((j) => j.branchId === b.id)
+                    .reduce((sum, j) => sum + (j.totalCost ?? 0), 0);
+
+                  return (
+                    <tr
+                      key={b.id}
+                      style={{
+                        background: b.id === activeBranchId ? 'var(--accent-primary-tint)' : 'transparent',
+                      }}
+                    >
+                      <td>
+                        <div style={{ fontWeight: 700 }}>{b.name}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.city}</div>
+                      </td>
+                      <td className="tabular" style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>{b.baysCount}</td>
+                      <td className="tabular" style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                        {branchActiveJobs}
+                      </td>
+                      <td className="tabular" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-secondary)' }}>
+                        ${branchOpenBilled.toFixed(0)} / ${b.monthlyRevenue.toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

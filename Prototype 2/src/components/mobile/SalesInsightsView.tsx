@@ -1,36 +1,78 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TrendingUp, DollarSign, AlertCircle, MessageSquare, Check, BarChart3 } from 'lucide-react';
+import { GarageBranch, JobCard } from '../../types';
 
 interface SalesInsightsViewProps {
-  activeBranchName: string;
+  activeBranch: GarageBranch;
+  jobs: JobCard[];
+  canSendReminders?: boolean;
 }
 
 export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
-  activeBranchName,
+  activeBranch,
+  jobs,
+  canSendReminders = true,
 }) => {
   const [reminderSent, setReminderSent] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const totalLabor = jobs.reduce((sum, j) => sum + (j.estimatedLaborCost ?? 0), 0);
+  const totalParts = jobs.reduce((sum, j) => sum + (j.partsCost ?? 0), 0);
+  const totalInvoiced = jobs.reduce((sum, j) => sum + (j.totalCost ?? 0), 0);
+  const avgRepairOrder = jobs.length > 0 ? totalInvoiced / jobs.length : 0;
+
+  const splitDenominator = Math.max(1, totalLabor + totalParts);
+  const laborPct = Math.round((totalLabor / splitDenominator) * 100);
+  const partsPct = 100 - laborPct;
+
+  const branchScale = activeBranch.monthlyRevenue / 64200;
   const weeklyTrend = [
-    { day: 'Mon', revenue: 6400 },
-    { day: 'Tue', revenue: 7850 },
-    { day: 'Wed', revenue: 9200 },
-    { day: 'Thu', revenue: 8600 },
-    { day: 'Fri', revenue: 11400 },
-    { day: 'Sat', revenue: 13900 },
-    { day: 'Sun', revenue: 6850 },
+    { day: 'Mon', revenue: Math.round(6400 * branchScale) },
+    { day: 'Tue', revenue: Math.round(7850 * branchScale) },
+    { day: 'Wed', revenue: Math.round(9200 * branchScale) },
+    { day: 'Thu', revenue: Math.round(8600 * branchScale) },
+    { day: 'Fri', revenue: Math.round(11400 * branchScale) },
+    { day: 'Sat', revenue: Math.round(13900 * branchScale) },
+    { day: 'Sun', revenue: Math.round(6850 * branchScale) },
   ];
+  const weeklyTotal = weeklyTrend.reduce((sum, d) => sum + d.revenue, 0);
+  const maxRevenue = Math.max(1, ...weeklyTrend.map((d) => d.revenue));
 
-  const maxRevenue = Math.max(...weeklyTrend.map((d) => d.revenue));
+  const unpaidInvoices = jobs
+    .map((j) => {
+      const total = j.totalCost ?? 0;
+      const paid = j.billingStatus === 'PAID' ? (j.paidAmount ?? total) : (j.paidAmount ?? 0);
+      const balance = Math.max(0, Math.round((total - paid) * 100) / 100);
+      return {
+        id: j.id,
+        jobNumber: j.jobNumber,
+        customer: j.customerName,
+        amount: balance,
+        billingStatus: j.billingStatus || 'PENDING',
+      };
+    })
+    .filter((inv) => inv.billingStatus !== 'PAID' && inv.amount > 0);
 
-  const unpaidInvoices = [
-    { id: 'inv-101', customer: 'Nexus Logistics Fleet', amount: 3420, daysOverdue: 14 },
-    { id: 'inv-102', customer: 'David Sterling', amount: 480, daysOverdue: 6 },
-    { id: 'inv-103', customer: 'Summit Express Couriers', amount: 1850, daysOverdue: 22 },
-  ];
+  const totalOutstanding = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
 
   const handleSendReminder = (id: string) => {
+    if (!canSendReminders) return;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+    }
     setReminderSent(id);
-    setTimeout(() => setReminderSent(null), 2500);
+    timerRef.current = window.setTimeout(() => {
+      setReminderSent(null);
+      timerRef.current = null;
+    }, 2500);
   };
 
   return (
@@ -41,28 +83,28 @@ export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
           <span className="sg-sector-title">
             <DollarSign size={14} color="var(--accent-primary)" /> Sector 1 &bull; Financial Performance
           </span>
-          <span className="sg-sector-subtitle">{activeBranchName}</span>
+          <span className="sg-sector-subtitle">{activeBranch.name}</span>
         </div>
 
         <div className="sg-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div className="sg-grid-matrix" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="sg-grid-cell" style={{ padding: '14px' }}>
-              <div className="sg-label">Monthly Revenue</div>
+              <div className="sg-label">Branch Monthly Rev</div>
               <div className="tabular" style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 700 }}>
-                $64,200
+                ${activeBranch.monthlyRevenue.toLocaleString()}
               </div>
               <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                <TrendingUp size={12} /> +14.2% vs last month
+                <TrendingUp size={12} /> Active orders: ${totalInvoiced.toFixed(0)}
               </div>
             </div>
 
             <div className="sg-grid-cell" style={{ padding: '14px' }}>
               <div className="sg-label">Avg Repair Order</div>
               <div className="tabular" style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 700 }}>
-                $368.50
+                ${avgRepairOrder.toFixed(2)}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Healthy shop benchmark
+                Across {jobs.length} branch order{jobs.length === 1 ? '' : 's'}
               </div>
             </div>
           </div>
@@ -70,9 +112,9 @@ export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
           {/* Revenue Split */}
           <div className="sg-panel-muted" style={{ padding: '14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 700 }}>Revenue Split</span>
+              <span style={{ fontSize: '12px', fontWeight: 700 }}>Open Orders Mix</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--accent-secondary)' }}>
-                54.2% Gross Margin
+                {laborPct}% Labor / {partsPct}% Parts
               </span>
             </div>
 
@@ -86,23 +128,18 @@ export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
                 marginBottom: '10px',
               }}
             >
-              <div style={{ width: '58%', background: 'var(--accent-primary)' }} />
-              <div style={{ width: '34%', background: 'var(--accent-volt)' }} />
-              <div style={{ width: '8%', background: 'var(--accent-violet)' }} />
+              <div style={{ width: `${laborPct}%`, background: 'var(--accent-primary)' }} />
+              <div style={{ width: `${partsPct}%`, background: 'var(--accent-volt)' }} />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
               <div>
                 <span style={{ display: 'inline-block', width: '8px', height: '8px', background: 'var(--accent-primary)', marginRight: '4px', border: '1px solid var(--border-strong)' }} />
-                Labor: <strong className="tabular" style={{ color: 'var(--text-primary)' }}>$37.2k</strong>
+                Labor: <strong className="tabular" style={{ color: 'var(--text-primary)' }}>${totalLabor.toFixed(2)}</strong>
               </div>
               <div>
                 <span style={{ display: 'inline-block', width: '8px', height: '8px', background: 'var(--accent-volt)', marginRight: '4px', border: '1px solid var(--border-strong)' }} />
-                Parts: <strong className="tabular" style={{ color: 'var(--text-primary)' }}>$21.8k</strong>
-              </div>
-              <div>
-                <span style={{ display: 'inline-block', width: '8px', height: '8px', background: 'var(--accent-violet)', marginRight: '4px', border: '1px solid var(--border-strong)' }} />
-                Sublet: <strong className="tabular" style={{ color: 'var(--text-primary)' }}>$5.1k</strong>
+                Parts: <strong className="tabular" style={{ color: 'var(--text-primary)' }}>${totalParts.toFixed(2)}</strong>
               </div>
             </div>
           </div>
@@ -115,7 +152,7 @@ export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
           <span className="sg-sector-title">
             <BarChart3 size={14} /> Sector 2 &bull; 7-Day Revenue Velocity
           </span>
-          <span className="sg-sector-subtitle tabular">$64.2k this week</span>
+          <span className="sg-sector-subtitle tabular">${(weeklyTotal / 1000).toFixed(1)}k projected/wk</span>
         </div>
 
         <div className="sg-panel" style={{ padding: '16px' }}>
@@ -172,50 +209,58 @@ export const SalesInsightsView: React.FC<SalesInsightsViewProps> = ({
           <span className="sg-sector-title" style={{ color: 'var(--accent-danger)' }}>
             <AlertCircle size={14} /> Sector 3 &bull; Uncollected Invoices
           </span>
-          <span className="sg-sector-subtitle tabular">$5,750 outstanding</span>
+          <span className="sg-sector-subtitle tabular">${totalOutstanding.toFixed(2)} outstanding</span>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {unpaidInvoices.map((inv, idx) => (
-            <div
-              key={inv.id}
-              className="sg-panel stagger-item"
-              style={{
-                '--stagger-index': idx,
-                padding: '14px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-              } as React.CSSProperties}
-            >
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: 700 }}>{inv.customer}</div>
-                <div style={{ fontSize: '12px', color: 'var(--accent-amber)', fontWeight: 600, marginTop: '2px' }}>
-                  {inv.daysOverdue} days overdue &bull;{' '}
-                  <strong className="tabular" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
-                    ${inv.amount}
-                  </strong>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => handleSendReminder(inv.id)}
-                className={`sg-btn sg-btn-sm ${reminderSent === inv.id ? 'sg-btn-emerald' : 'sg-btn-volt'}`}
-              >
-                {reminderSent === inv.id ? (
-                  <>
-                    <Check size={13} /> Sent WhatsApp!
-                  </>
-                ) : (
-                  <>
-                    <MessageSquare size={13} /> Remind
-                  </>
-                )}
-              </button>
+          {unpaidInvoices.length === 0 ? (
+            <div className="sg-panel-muted" style={{ padding: '20px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
+              All invoices in {activeBranch.name} are settled.
             </div>
-          ))}
+          ) : (
+            unpaidInvoices.map((inv, idx) => (
+              <div
+                key={inv.id}
+                className="sg-panel stagger-item"
+                style={{
+                  '--stagger-index': idx,
+                  padding: '14px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                } as React.CSSProperties}
+              >
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 700 }}>{inv.customer}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--accent-amber)', fontWeight: 600, marginTop: '2px' }}>
+                    {inv.jobNumber} &bull; {inv.billingStatus} &bull;{' '}
+                    <strong className="tabular" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+                      ${inv.amount.toFixed(2)}
+                    </strong>
+                  </div>
+                </div>
+
+                {canSendReminders && (
+                  <button
+                    type="button"
+                    onClick={() => handleSendReminder(inv.id)}
+                    className={`sg-btn sg-btn-sm ${reminderSent === inv.id ? 'sg-btn-emerald' : 'sg-btn-volt'}`}
+                  >
+                    {reminderSent === inv.id ? (
+                      <>
+                        <Check size={13} /> Sent WhatsApp!
+                      </>
+                    ) : (
+                      <>
+                        <MessageSquare size={13} /> Remind
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </section>
     </div>
